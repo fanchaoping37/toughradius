@@ -94,10 +94,11 @@ func newCoAActionResponse(r *radiusd.CoAResult) coaActionResponse {
 }
 
 // resolveSessionAndNAS loads the online session identified by id and the NAS that
-// hosts it, returning a CoA target and session identity for a Dynamic
-// Authorization exchange. On failure it writes the appropriate error response and
-// returns ok=false; the caller then returns the (already written) response.
-func resolveSessionAndNAS(c echo.Context, id int64) (radiusd.CoATarget, radiusd.SessionIdentity, bool) {
+// hosts it, returning a CoA target, session identity and the session record
+// (used by the upstream proxy relay). On failure it writes the appropriate
+// error response and returns ok=false; the caller then returns the (already
+// written) response.
+func resolveSessionAndNAS(c echo.Context, id int64) (radiusd.CoATarget, radiusd.SessionIdentity, *domain.RadiusOnline, bool) {
 	var session domain.RadiusOnline
 	if err := GetDB(c).First(&session, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -105,7 +106,7 @@ func resolveSessionAndNAS(c echo.Context, id int64) (radiusd.CoATarget, radiusd.
 		} else {
 			_ = fail(c, http.StatusInternalServerError, "DATABASE_ERROR", "Failed to load session", err.Error()) //nolint:errcheck
 		}
-		return radiusd.CoATarget{}, radiusd.SessionIdentity{}, false
+		return radiusd.CoATarget{}, radiusd.SessionIdentity{}, nil, false
 	}
 
 	var nas domain.NetNas
@@ -116,10 +117,10 @@ func resolveSessionAndNAS(c echo.Context, id int64) (radiusd.CoATarget, radiusd.
 		} else {
 			_ = fail(c, http.StatusInternalServerError, "DATABASE_ERROR", "Failed to load NAS", err.Error()) //nolint:errcheck
 		}
-		return radiusd.CoATarget{}, radiusd.SessionIdentity{}, false
+		return radiusd.CoATarget{}, radiusd.SessionIdentity{}, nil, false
 	}
 
-	return radiusd.CoATargetFromNas(&nas), radiusd.SessionIdentityFromOnline(&session), true
+	return radiusd.CoATargetFromNas(&nas), radiusd.SessionIdentityFromOnline(&session), &session, true
 }
 
 // DisconnectOnlineSession sends a RADIUS Disconnect-Request (RFC 5176 §2.1) to the
@@ -149,7 +150,7 @@ func DisconnectOnlineSession(c echo.Context) error {
 		return fail(c, http.StatusBadRequest, "INVALID_ID", "Invalid Session ID", nil)
 	}
 
-	target, identity, resolved := resolveSessionAndNAS(c, id)
+	target, identity, session, resolved := resolveSessionAndNAS(c, id)
 	if !resolved {
 		return nil
 	}
@@ -158,6 +159,11 @@ func DisconnectOnlineSession(c echo.Context) error {
 	if err != nil {
 		return fail(c, http.StatusUnprocessableEntity, "COA_REQUEST_FAILED", "Failed to build Disconnect request", err.Error())
 	}
+
+	// Multi-level ISP relay: when the session owner matches a proxied realm,
+	// also send a Disconnect-Request to the upstream server (CoA protocol
+	// method). Best-effort and asynchronous.
+	go relayDisconnectUpstream(c, session)
 
 	logSessionAction(c, result)
 	if err := persistSessionActionAudit(c, id, identity, result); err != nil {
@@ -203,7 +209,7 @@ func ChangeOnlineSessionAuthorization(c echo.Context) error {
 			"At least one authorization change (session_timeout, filter_id) is required", nil)
 	}
 
-	target, identity, resolved := resolveSessionAndNAS(c, id)
+	target, identity, _, resolved := resolveSessionAndNAS(c, id)
 	if !resolved {
 		return nil
 	}

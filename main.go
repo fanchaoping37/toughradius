@@ -118,6 +118,11 @@ func main() {
 		return radiusd.ListenRadsecServer(application, radsec)
 	})
 
+	// Start RFC 5176 dynamic-authorization server (upstream CoA/DM relay)
+	g.Go(func() error {
+		return radiusd.ListenDynAuthServer(application, radiusd.NewDynAuthService(radiusService))
+	})
+
 	if err := g.Wait(); err != nil {
 		log.Fatal(err)
 	}
