@@ -138,6 +138,14 @@ type WebConfig struct {
 //   - TOUGHRADIUS_RADIUS_RADSEC_CERT
 //   - TOUGHRADIUS_RADIUS_RADSEC_KEY
 //   - TOUGHRADIUS_RADIUS_DEBUG
+//
+// Proxy settings control the RADIUS proxy/replication subsystem:
+//   - ProxyEnabled gates upstream forwarding and request replication
+//   - DynAuthEnabled gates the inbound RFC 5176 dynamic-authorization server
+//     (upstream-initiated CoA/Disconnect relayed to the NAS)
+//   - DynAuthPort is the dynamic-authorization listener port (default 3799)
+//   - DynAuthSecret is the fallback shared secret for dynamic-authorization
+//     clients that are not registered as proxy upstreams
 type RadiusdConfig struct {
 	Enabled      bool   `yaml:"enabled" json:"enabled"`
 	Host         string `yaml:"host" json:"host"`
@@ -148,7 +156,15 @@ type RadiusdConfig struct {
 	RadsecCaCert string `yaml:"radsec_ca_cert" json:"radsec_ca_cert"` // RadSec CA certificate path
 	RadsecCert   string `yaml:"radsec_cert" json:"radsec_cert"`       // RadSec server certificate path
 	RadsecKey    string `yaml:"radsec_key" json:"radsec_key"`         // RadSec server private key path
-	Debug        bool   `yaml:"debug" json:"debug"`
+
+	ProxyEnabled   bool   `yaml:"proxy_enabled" json:"proxy_enabled"`     // enable upstream proxy/replicate forwarding
+	ProxyTimeout   int    `yaml:"proxy_timeout" json:"proxy_timeout"`     // upstream exchange timeout in seconds (default 5)
+	ProxyRetry     int    `yaml:"proxy_retry" json:"proxy_retry"`         // upstream retransmission count (default 2)
+	DynAuthEnabled bool   `yaml:"dynauth_enabled" json:"dynauth_enabled"` // enable inbound CoA/Disconnect listener
+	DynAuthPort    int    `yaml:"dynauth_port" json:"dynauth_port"`       // inbound dynamic-authorization port (default 3799)
+	DynAuthSecret  string `yaml:"dynauth_secret" json:"dynauth_secret"`   // fallback dynamic-authorization shared secret
+
+	Debug bool `yaml:"debug" json:"debug"`
 }
 
 // LogConfig holds logging settings using zap structured logger.
@@ -499,7 +515,14 @@ var DefaultAppConfig = &AppConfig{
 		RadsecCaCert: "private/ca.crt",
 		RadsecCert:   "private/radsec.tls.crt",
 		RadsecKey:    "private/radsec.tls.key",
-		Debug:        true,
+		ProxyEnabled: false,
+		ProxyTimeout: 5,
+		ProxyRetry:   2,
+
+		DynAuthEnabled: false,
+		DynAuthPort:    3799,
+		DynAuthSecret:  "",
+		Debug:          true,
 	},
 	Logger: LogConfig{
 		Mode:       "development",
@@ -600,6 +623,14 @@ func LoadConfig(cfile string) *AppConfig {
 	setEnvValue("TOUGHRADIUS_RADIUS_RADSEC_KEY", &cfg.Radiusd.RadsecKey)
 	setEnvBoolValue("TOUGHRADIUS_RADIUS_DEBUG", &cfg.Radiusd.Debug)
 	setEnvBoolValue("TOUGHRADIUS_RADIUS_ENABLED", &cfg.Radiusd.Enabled)
+
+	// Proxy subsystem
+	setEnvBoolValue("TOUGHRADIUS_RADIUS_PROXY_ENABLED", &cfg.Radiusd.ProxyEnabled)
+	setEnvIntValue("TOUGHRADIUS_RADIUS_PROXY_TIMEOUT", &cfg.Radiusd.ProxyTimeout)
+	setEnvIntValue("TOUGHRADIUS_RADIUS_PROXY_RETRY", &cfg.Radiusd.ProxyRetry)
+	setEnvBoolValue("TOUGHRADIUS_RADIUS_DYNAUTH_ENABLED", &cfg.Radiusd.DynAuthEnabled)
+	setEnvIntValue("TOUGHRADIUS_RADIUS_DYNAUTH_PORT", &cfg.Radiusd.DynAuthPort)
+	setEnvValue("TOUGHRADIUS_RADIUS_DYNAUTH_SECRET", &cfg.Radiusd.DynAuthSecret)
 
 	setEnvValue("TOUGHRADIUS_LOGGER_MODE", &cfg.Logger.Mode)
 	setEnvBoolValue("TOUGHRADIUS_LOGGER_FILE_ENABLE", &cfg.Logger.FileEnable)

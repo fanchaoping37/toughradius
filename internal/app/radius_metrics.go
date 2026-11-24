@@ -30,6 +30,16 @@ const (
 	MetricsRadiusRadsecSaturated  = "radus_radsec_saturated"
 	MetricsRadiusAccept           = "radus_accept"
 	MetricsRadiusAccounting       = "radus_accounting"
+
+	// Proxy subsystem counters: upstream forwarding, replication and failures.
+	MetricsRadiusProxyAuthForward    = "radus_proxy_auth_forward"
+	MetricsRadiusProxyAuthFail       = "radus_proxy_auth_fail"
+	MetricsRadiusProxyAcctForward    = "radus_proxy_acct_forward"
+	MetricsRadiusProxyAcctFail       = "radus_proxy_acct_fail"
+	MetricsRadiusProxyReplicate      = "radus_proxy_replicate"
+	MetricsRadiusProxyReplicateFail  = "radus_proxy_replicate_fail"
+	MetricsRadiusProxyDynAuthRelay   = "radus_proxy_dynauth_relay"
+	MetricsRadiusProxyDynAuthRelayFail = "radus_proxy_dynauth_relay_fail"
 )
 
 var metricsNames = []string{
@@ -53,6 +63,14 @@ var metricsNames = []string{
 	MetricsRadiusRadsecSaturated,
 	MetricsRadiusAccept,
 	MetricsRadiusAccounting,
+	MetricsRadiusProxyAuthForward,
+	MetricsRadiusProxyAuthFail,
+	MetricsRadiusProxyAcctForward,
+	MetricsRadiusProxyAcctFail,
+	MetricsRadiusProxyReplicate,
+	MetricsRadiusProxyReplicateFail,
+	MetricsRadiusProxyDynAuthRelay,
+	MetricsRadiusProxyDynAuthRelayFail,
 }
 
 // GetRadiusMetrics retrieves the current counter value for a specific RADIUS metric.

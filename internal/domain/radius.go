@@ -133,6 +133,12 @@ type RadiusOnline struct {
 	AcctOutputPackets   int       `json:"acct_output_packets"`
 	AcctStartTime       time.Time `gorm:"index" json:"acct_start_time"`
 	LastUpdate          time.Time `json:"last_update"`
+	// ProxyUpstream records the name of the upstream server this session was
+	// authenticated against (empty for locally-authenticated sessions). It
+	// allows admin-triggered disconnect/CoA operations to be relayed upstream.
+	ProxyUpstream string `json:"proxy_upstream"`
+	// ProxyRealm records the realm route that proxied the session's owner.
+	ProxyRealm string `json:"proxy_realm"`
 }
 
 // TableName Specify table name

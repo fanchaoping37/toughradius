@@ -105,6 +105,9 @@ func (s *AcctService) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
 		)
 	}
 
+	// Proxy forwarding + replication side-channels (async upstream I/O).
+	s.dispatchAcctProxy(r, username)
+
 	// async process accounting with back-pressure aware submit
 	task := func() {
 		vendorReqForPlugin := &vendorparserspkg.VendorRequest{

@@ -20,6 +20,7 @@ const (
 	StageNasLookup       = "nas_lookup"
 	StageMsgAuth         = "message_authenticator"
 	StageRateLimit       = "auth_rate_limit"
+	StageProxyDispatch   = "proxy_dispatch"
 	StageVendorParsing   = "vendor_parsing"
 	StageLoadUser        = "load_user"
 	StageEAPDispatch     = "eap_dispatch"
@@ -32,6 +33,7 @@ func (s *AuthService) registerDefaultStages() {
 		newStage(StageNasLookup, s.stageNasLookup),
 		newStage(StageMsgAuth, s.stageMessageAuthenticator),
 		newStage(StageRateLimit, s.stageRateLimit),
+		newStage(StageProxyDispatch, s.stageProxyDispatch),
 		newStage(StageVendorParsing, s.stageVendorParsing),
 		newStage(StageLoadUser, s.stageLoadUser),
 		newStage(StageEAPDispatch, s.stageEAPDispatch),

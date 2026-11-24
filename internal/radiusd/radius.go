@@ -34,6 +34,7 @@ import (
 
 	// Import vendor parsers for auto-registration
 	"github.com/talkincode/toughradius/v9/internal/radiusd/plugins/auth"
+	"github.com/talkincode/toughradius/v9/internal/radiusd/proxy"
 	vendorparsers "github.com/talkincode/toughradius/v9/internal/radiusd/plugins/vendorparsers"
 	_ "github.com/talkincode/toughradius/v9/internal/radiusd/plugins/vendorparsers/parsers"
 )
@@ -66,6 +67,9 @@ type RadiusService struct {
 	TaskPool  *ants.Pool
 	nasCache  *cachepkg.TTLCache[*domain.NetNas]
 	userCache *cachepkg.TTLCache[*domain.RadiusUser]
+
+	// Proxy implements upstream forwarding, realm routing and replication.
+	Proxy *proxy.Service
 
 	// New Repository Layer (v9 refactoring)
 	UserRepo       repository.UserRepository
@@ -101,6 +105,9 @@ func NewRadiusService(appCtx app.AppContext) *RadiusService {
 		AccountingRepo: repogorm.NewGormAccountingRepository(db),
 		NasRepo:        repogorm.NewGormNasRepository(db),
 	}
+	s.Proxy = proxy.NewService(appCtx,
+		time.Duration(appCtx.Config().Radiusd.ProxyTimeout)*time.Second,
+		appCtx.Config().Radiusd.ProxyRetry)
 
 	// Note: Plugin initialization is done externally after service creation
 	// to avoid circular dependency. Call plugins.InitPlugins() from main.go.

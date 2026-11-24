@@ -88,6 +88,10 @@ func (s *AuthService) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
 			s.logAndReject(w, r, finalErr)
 		}
 	}
+
+	// Replicate the request copy to role=replicate upstreams regardless of the
+	// local auth outcome (only for requests that passed NAS validation).
+	s.replicateAuthRequest(pipelineCtx)
 }
 
 // Pipeline exposes the underlying auth pipeline for customization.

@@ -15,4 +15,7 @@ var Tables = []interface{}{
 	&RadiusSessionActionAudit{},
 	&RadiusProfile{},
 	&RadiusUser{},
+	// Proxy subsystem
+	&RadiusUpstream{},
+	&RadiusRealmRoute{},
 }
