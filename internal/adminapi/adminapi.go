@@ -39,6 +39,7 @@ func Init(appCtx app.AppContext) {
 	registerAccountingRoutes()
 	registerSessionRoutes()
 	registerNASRoutes()
+	registerProxyRoutes()
 	registerSettingsRoutes()
 	registerNodesRoutes()
 	registerOperatorsRoutes()
