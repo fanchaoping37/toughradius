@@ -4,13 +4,18 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"runtime"
+	"strconv"
+	"time"
 	_ "time/tzdata"
 
 	"github.com/talkincode/toughradius/v9/config"
 	"github.com/talkincode/toughradius/v9/internal/adminapi"
 	"github.com/talkincode/toughradius/v9/internal/app"
+	"github.com/talkincode/toughradius/v9/internal/domain"
+	"github.com/talkincode/toughradius/v9/internal/portal"
 	"github.com/talkincode/toughradius/v9/internal/radiusd"
 	"github.com/talkincode/toughradius/v9/internal/webserver"
 	"github.com/talkincode/toughradius/v9/pkg/common"
@@ -122,6 +127,39 @@ func main() {
 	g.Go(func() error {
 		return radiusd.ListenDynAuthServer(application, radiusd.NewDynAuthService(radiusService))
 	})
+
+	// Start Huawei/CMCC Portal V2 UDP protocol server (protocol only; the
+	// NAS sends RADIUS auth requests to 1812 as usual).
+	portalCfg := application.Config().Portal
+	if portalCfg.Enabled {
+		portalServer := portal.NewServer(portal.ServerConfig{
+			BindHost:   portalCfg.BindHost,
+			BindPort:   portalCfg.BindPort,
+			NASPort:    portalCfg.NASPort,
+			Timeout:    time.Duration(portalCfg.Timeout) * time.Second,
+			Retries:    portalCfg.Retry,
+			SessionTTL: time.Duration(portalCfg.SessionTTL) * time.Second,
+		})
+		portal.SetActiveService(portal.NewService(portalServer))
+
+		// Load enabled Portal NAS devices from the database before listening.
+		var portalNases []domain.PortalNas
+		if err := application.DB().Where("status = ?", "enabled").Find(&portalNases).Error; err != nil {
+			log.Printf("load portal NAS devices failed: %v", err)
+		}
+		for _, nas := range portalNases {
+			if err := portalServer.RegisterNAS(&portal.NAS{
+				Addr:   net.JoinHostPort(nas.Addr, strconv.Itoa(nas.Port)),
+				Secret: nas.Secret,
+			}); err != nil {
+				log.Printf("register portal NAS %s failed: %v", nas.Name, err)
+			}
+		}
+
+		g.Go(func() error {
+			return portalServer.Listen()
+		})
+	}
 
 	if err := g.Wait(); err != nil {
 		log.Fatal(err)

@@ -18,4 +18,6 @@ var Tables = []interface{}{
 	// Proxy subsystem
 	&RadiusUpstream{},
 	&RadiusRealmRoute{},
+	// Portal V2 protocol subsystem
+	&PortalNas{},
 }

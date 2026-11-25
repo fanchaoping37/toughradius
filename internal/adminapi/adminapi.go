@@ -40,6 +40,7 @@ func Init(appCtx app.AppContext) {
 	registerSessionRoutes()
 	registerNASRoutes()
 	registerProxyRoutes()
+	registerPortalRoutes()
 	registerSettingsRoutes()
 	registerNodesRoutes()
 	registerOperatorsRoutes()

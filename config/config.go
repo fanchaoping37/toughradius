@@ -167,6 +167,26 @@ type RadiusdConfig struct {
 	Debug bool `yaml:"debug" json:"debug"`
 }
 
+// PortalConfig controls the Huawei/CMCC Portal V2 UDP protocol server.
+//
+// Portal is protocol-only: the RADIUS Access-Request is sent by the NAS to
+// this instance's 1812 listener; no login page is hosted here. Register
+// Portal-capable NAS devices through /api/v1/portal-nases (addr + secret).
+//
+// Environment variables:
+//   - TOUGHRADIUS_PORTAL_ENABLED
+//   - TOUGHRADIUS_PORTAL_BIND_HOST / _BIND_PORT / _NAS_PORT
+//   - TOUGHRADIUS_PORTAL_TIMEOUT / _RETRY / _SESSION_TTL
+type PortalConfig struct {
+	Enabled    bool   `yaml:"enabled" json:"enabled"`
+	BindHost   string `yaml:"bind_host" json:"bind_host"`
+	BindPort   int    `yaml:"bind_port" json:"bind_port"`   // server listener, default 50100
+	NASPort    int    `yaml:"nas_port" json:"nas_port"`     // NAS Portal port, default 2000
+	Timeout    int    `yaml:"timeout" json:"timeout"`       // seconds, default 5
+	Retry      int    `yaml:"retry" json:"retry"`           // retransmissions, default 2
+	SessionTTL int    `yaml:"session_ttl" json:"session_ttl"` // seconds, default 600
+}
+
 // LogConfig holds logging settings using zap structured logger.
 //
 // Mode can be "development" or "production":
@@ -202,6 +222,7 @@ type AppConfig struct {
 	Web      WebConfig     `yaml:"web" json:"web"`
 	Database DBConfig      `yaml:"database" json:"database"`
 	Radiusd  RadiusdConfig `yaml:"radiusd" json:"radiusd"`
+	Portal   PortalConfig  `yaml:"portal" json:"portal"`
 	Logger   LogConfig     `yaml:"logger" json:"logger"`
 }
 
@@ -524,6 +545,15 @@ var DefaultAppConfig = &AppConfig{
 		DynAuthSecret:  "",
 		Debug:          true,
 	},
+	Portal: PortalConfig{
+		Enabled:    false,
+		BindHost:   "0.0.0.0",
+		BindPort:   50100,
+		NASPort:    2000,
+		Timeout:    5,
+		Retry:      2,
+		SessionTTL: 600,
+	},
 	Logger: LogConfig{
 		Mode:       "development",
 		FileEnable: true,
@@ -631,6 +661,15 @@ func LoadConfig(cfile string) *AppConfig {
 	setEnvBoolValue("TOUGHRADIUS_RADIUS_DYNAUTH_ENABLED", &cfg.Radiusd.DynAuthEnabled)
 	setEnvIntValue("TOUGHRADIUS_RADIUS_DYNAUTH_PORT", &cfg.Radiusd.DynAuthPort)
 	setEnvValue("TOUGHRADIUS_RADIUS_DYNAUTH_SECRET", &cfg.Radiusd.DynAuthSecret)
+
+	// Portal protocol subsystem
+	setEnvBoolValue("TOUGHRADIUS_PORTAL_ENABLED", &cfg.Portal.Enabled)
+	setEnvValue("TOUGHRADIUS_PORTAL_BIND_HOST", &cfg.Portal.BindHost)
+	setEnvIntValue("TOUGHRADIUS_PORTAL_BIND_PORT", &cfg.Portal.BindPort)
+	setEnvIntValue("TOUGHRADIUS_PORTAL_NAS_PORT", &cfg.Portal.NASPort)
+	setEnvIntValue("TOUGHRADIUS_PORTAL_TIMEOUT", &cfg.Portal.Timeout)
+	setEnvIntValue("TOUGHRADIUS_PORTAL_RETRY", &cfg.Portal.Retry)
+	setEnvIntValue("TOUGHRADIUS_PORTAL_SESSION_TTL", &cfg.Portal.SessionTTL)
 
 	setEnvValue("TOUGHRADIUS_LOGGER_MODE", &cfg.Logger.Mode)
 	setEnvBoolValue("TOUGHRADIUS_LOGGER_FILE_ENABLE", &cfg.Logger.FileEnable)
