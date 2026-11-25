@@ -10,7 +10,9 @@ import (
 // UDP exchange to Server and maps protocol ErrCodes to stable result codes
 // for the HTTP API. It has no dependency on the admin API or database.
 type Service struct {
-	Server *Server
+	Server        *Server
+	Tickets       *TicketManager
+	RequireTicket bool
 }
 
 func NewService(server *Server) *Service { return &Service{Server: server} }
@@ -27,6 +29,7 @@ type ChallengeRequest struct {
 	NASAddr  string `json:"nas_addr"`
 	Username string `json:"username"`
 	UserIP   string `json:"user_ip"`
+	MAC      string `json:"mac"`
 }
 
 // ChallengeResult is returned to the external login page after the
@@ -37,6 +40,7 @@ type ChallengeResult struct {
 	Username string `json:"username"`
 	ReqID    uint16 `json:"req_id"`
 	Message  string `json:"message"`
+	Ticket   string `json:"auth_ticket,omitempty"`
 }
 
 // AuthRequest completes authentication. AuthMode is "chap" (default) or
@@ -47,6 +51,8 @@ type AuthRequest struct {
 	Password string `json:"password"`
 	UserIP   string `json:"user_ip"`
 	AuthMode string `json:"auth_mode"`
+	MAC      string `json:"mac"`
+	Ticket   string `json:"auth_ticket"`
 }
 
 // AuthResult maps the NAS ErrCode onto a stable API code.
@@ -116,13 +122,21 @@ func (s *Service) Challenge(req ChallengeRequest) (*ChallengeResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ChallengeResult{
+	result := &ChallengeResult{
 		Serial:   session.SerialNo,
 		UserIP:   req.UserIP,
 		Username: req.Username,
 		ReqID:    session.ReqID,
 		Message:  "challenge accepted",
-	}, nil
+	}
+	if s.Tickets != nil {
+		ticket, err := s.Tickets.Issue(req.Username, req.UserIP, req.MAC, session.SerialNo)
+		if err != nil {
+			return nil, err
+		}
+		result.Ticket = ticket
+	}
+	return result, nil
 }
 
 // Authenticate sends REQ_AUTH using CHAP (default) or PAP.
@@ -133,6 +147,18 @@ func (s *Service) Authenticate(req AuthRequest) (*AuthResult, error) {
 	ip, err := parseUserIP(req.UserIP)
 	if err != nil {
 		return nil, err
+	}
+	if s.Tickets != nil || s.RequireTicket {
+		if s.Tickets == nil {
+			return nil, errors.New("portal: ticket manager is not configured")
+		}
+		serial, err := s.Tickets.Verify(req.Ticket, req.Username, req.UserIP, req.MAC)
+		if err != nil {
+			return nil, err
+		}
+		if session, ok := s.Server.SessionByIP(req.UserIP); ok && serial != session.SerialNo {
+			return nil, errors.New("portal: auth_ticket does not match the active challenge")
+		}
 	}
 	pap := false
 	switch req.AuthMode {

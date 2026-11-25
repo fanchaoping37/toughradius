@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/talkincode/toughradius/v9/internal/domain"
@@ -93,8 +92,11 @@ func (h *StartHandler) Handle(acctCtx *accounting.AccountingContext) error {
 	}
 
 	// Create accounting record (only for newly created sessions)
-	accounting := h.buildRadiusAccounting(&online, true)
-	if err := h.accountingRepo.Create(acctCtx.Context, &accounting); err != nil {
+	ledger := h.buildRadiusAccounting(&online, true)
+	ledger.AcctStatusType = int(rfc2866.AcctStatusType_Value_Start)
+	ledger.DedupKey = accounting.DedupKey(acctCtx.Request, acctCtx.NASIP)
+	ledger.RawAttrs = accounting.SanitizedAttributes(acctCtx.Request.Packet)
+	if err := h.accountingRepo.Create(acctCtx.Context, &ledger); err != nil {
 		zap.L().Error("add radius accounting error",
 			zap.String("namespace", "radius"),
 			zap.String("username", acctCtx.Username),
@@ -126,15 +128,10 @@ func (h *StartHandler) Handle(acctCtx *accounting.AccountingContext) error {
 // common.NA so later filtering and presentation layers can treat absence
 // consistently across NAS implementations.
 func (h *StartHandler) buildRadiusOnline(r *radius.Request, vr *vendorparserspkg.VendorRequest, nas *domain.NetNas, nasrip string) domain.RadiusOnline {
-	acctInputOctets := int(rfc2866.AcctInputOctets_Get(r.Packet))
-	acctInputGigawords := int(rfc2869.AcctInputGigawords_Get(r.Packet))
-	acctOutputOctets := int(rfc2866.AcctOutputOctets_Get(r.Packet))
-	acctOutputGigawords := int(rfc2869.AcctOutputGigawords_Get(r.Packet))
-
-	getAcctStartTime := func(sessionTime int) time.Time {
-		m, _ := time.ParseDuration(fmt.Sprintf("-%ds", sessionTime))
-		return time.Now().Add(m)
-	}
+	acctInputOctets := rfc2866.AcctInputOctets_Get(r.Packet)
+	acctInputGigawords := rfc2869.AcctInputGigawords_Get(r.Packet)
+	acctOutputOctets := rfc2866.AcctOutputOctets_Get(r.Packet)
+	acctOutputGigawords := rfc2869.AcctOutputGigawords_Get(r.Packet)
 
 	return domain.RadiusOnline{
 		ID:                  common.UUIDint64(),
@@ -156,11 +153,13 @@ func (h *StartHandler) buildRadiusOnline(r *radius.Request, vr *vendorparserspkg
 		ServiceType:         0,
 		AcctSessionId:       rfc2866.AcctSessionID_GetString(r.Packet),
 		AcctSessionTime:     int(rfc2866.AcctSessionTime_Get(r.Packet)),
-		AcctInputTotal:      int64(acctInputOctets) + int64(acctInputGigawords)*4*1024*1024*1024,
-		AcctOutputTotal:     int64(acctOutputOctets) + int64(acctOutputGigawords)*4*1024*1024*1024,
+		AcctInputTotal:      accounting.GigawordOctets(uint32(acctInputOctets), uint32(acctInputGigawords)),
+		AcctOutputTotal:     accounting.GigawordOctets(uint32(acctOutputOctets), uint32(acctOutputGigawords)),
 		AcctInputPackets:    int(rfc2866.AcctInputPackets_Get(r.Packet)),
 		AcctOutputPackets:   int(rfc2866.AcctOutputPackets_Get(r.Packet)),
-		AcctStartTime:       getAcctStartTime(int(rfc2866.AcctSessionTime_Get(r.Packet))),
+		AcctStartTime:       accounting.StartTime(r.Packet),
+		EventTimestamp:      accounting.EventTime(r.Packet),
+		AcctDelayTime:       int(rfc2866.AcctDelayTime_Get(r.Packet)),
 		LastUpdate:          time.Now(),
 	}
 }
@@ -197,6 +196,8 @@ func (h *StartHandler) buildRadiusAccounting(online *domain.RadiusOnline, start 
 		AcctOutputPackets:   online.AcctOutputPackets,
 		LastUpdate:          time.Now(),
 		AcctStartTime:       online.AcctStartTime,
+		EventTimestamp:      online.EventTimestamp,
+		AcctDelayTime:       online.AcctDelayTime,
 	}
 
 	if !start {

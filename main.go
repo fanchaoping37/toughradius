@@ -140,7 +140,10 @@ func main() {
 			Retries:    portalCfg.Retry,
 			SessionTTL: time.Duration(portalCfg.SessionTTL) * time.Second,
 		})
-		portal.SetActiveService(portal.NewService(portalServer))
+		portalSvc := portal.NewService(portalServer)
+		portalSvc.Tickets = portal.NewTicketManager(application.Config().Web.Secret, 2*time.Minute)
+		portalSvc.RequireTicket = true
+		portal.SetActiveService(portalSvc)
 
 		// Load enabled Portal NAS devices from the database before listening.
 		var portalNases []domain.PortalNas

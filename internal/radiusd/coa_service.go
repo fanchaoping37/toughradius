@@ -182,6 +182,9 @@ type CoAService struct {
 	// by default it is the Exchange method of a dedicated radius.Client whose
 	// internal Retry is disabled (CoAService manages retransmission itself).
 	exchange func(ctx context.Context, packet *radius.Packet, addr string) (*radius.Packet, error)
+	// fixedIdentifier keeps the RFC 5176 Identifier stable when a durable
+	// CoA task is retried after a process restart with unchanged attributes.
+	fixedIdentifier *byte
 }
 
 // CoAOption customizes a CoAService.
@@ -205,6 +208,14 @@ func WithCoARetries(n int) CoAOption {
 		}
 		s.retries = n
 	}
+}
+
+// WithCoAIdentifier pins the RADIUS Identifier used by subsequent requests.
+// RFC 5176 §3 requires the same Identifier when retransmitting an unchanged
+// request, which is what a durable CoA task retry does.
+func WithCoAIdentifier(id int) CoAOption {
+	b := byte(id)
+	return func(s *CoAService) { s.fixedIdentifier = &b }
 }
 
 // NewCoAService constructs a CoAService. radiusService may be nil when only the
@@ -242,6 +253,9 @@ func (s *CoAService) Disconnect(ctx context.Context, target CoATarget, id Sessio
 		return nil, ErrNoTarget
 	}
 	packet := radius.New(radius.CodeDisconnectRequest, []byte(target.Secret))
+	if s.fixedIdentifier != nil {
+		packet.Identifier = *s.fixedIdentifier
+	}
 	if err := applyIdentity(packet, id); err != nil {
 		return nil, fmt.Errorf("coa: build disconnect request: %w", err)
 	}
@@ -260,6 +274,9 @@ func (s *CoAService) CoA(ctx context.Context, target CoATarget, id SessionIdenti
 		return nil, ErrNoTarget
 	}
 	packet := radius.New(radius.CodeCoARequest, []byte(target.Secret))
+	if s.fixedIdentifier != nil {
+		packet.Identifier = *s.fixedIdentifier
+	}
 	if err := applyIdentity(packet, id); err != nil {
 		return nil, fmt.Errorf("coa: build coa request: %w", err)
 	}

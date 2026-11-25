@@ -77,6 +77,7 @@ var JwtSkipPrefix = []string{
 	"/realip",
 	apiBasePath + "/auth/login",
 	apiBasePath + "/auth/refresh",
+	apiBasePath + "/open",
 }
 
 var server *AdminServer

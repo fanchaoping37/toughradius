@@ -57,7 +57,11 @@ func (r *GormSessionRepository) Update(ctx context.Context, session *domain.Radi
 		"acct_input_packets":  session.AcctInputPackets,
 		"acct_output_packets": session.AcctOutputPackets,
 		"acct_session_time":   session.AcctSessionTime,
-		"last_update":         time.Now(),
+		"last_update":         session.LastUpdate,
+	}
+	if !session.EventTimestamp.IsZero() {
+		param["event_timestamp"] = session.EventTimestamp
+		param["acct_delay_time"] = session.AcctDelayTime
 	}
 	return r.db.WithContext(ctx).
 		Model(&domain.RadiusOnline{}).

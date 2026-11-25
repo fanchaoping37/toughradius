@@ -26,12 +26,27 @@ func (r *GormAccountingRepository) Create(ctx context.Context, accounting *domai
 	if accounting.ID == 0 {
 		accounting.ID = common.UUIDint64()
 	}
+	if accounting.DedupKey == "" {
+		// Legacy callers (and migration backfill) may create ledger rows
+		// without an RFC 5080 key. Give each such row a distinct sentinel so
+		// the unique index does not reject historical duplicates.
+		accounting.DedupKey = fmt.Sprintf("legacy-%d", accounting.ID)
+	}
 	return r.db.WithContext(ctx).Create(accounting).Error
 }
 
 func (r *GormAccountingRepository) UpdateStop(ctx context.Context, sessionId string, accounting *domain.RadiusAccounting) error {
+	stopTime := time.Now()
+	if !accounting.EventTimestamp.IsZero() {
+		stopTime = accounting.EventTimestamp
+	}
 	param := map[string]interface{}{
-		"acct_stop_time":      time.Now(),
+		"acct_stop_time":      stopTime,
+		"event_timestamp":     stopTime,
+		"acct_delay_time":     accounting.AcctDelayTime,
+		"acct_status_type":    accounting.AcctStatusType,
+		"dedup_key":           accounting.DedupKey,
+		"raw_attrs":           accounting.RawAttrs,
 		"acct_input_total":    accounting.AcctInputTotal,
 		"acct_output_total":   accounting.AcctOutputTotal,
 		"acct_input_packets":  accounting.AcctInputPackets,

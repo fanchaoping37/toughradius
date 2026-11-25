@@ -155,7 +155,16 @@ func DisconnectOnlineSession(c echo.Context) error {
 		return nil
 	}
 
+	task, taskErr := startCoATask(c, id, identity, target, "disconnect", "", 0)
+	if taskErr != nil {
+		zap.L().Warn("failed to persist CoA task before send", zap.Error(taskErr))
+	}
 	result, err := sessionCoAService().Disconnect(c.Request().Context(), target, identity)
+	if taskErr == nil {
+		if finishErr := finishCoATask(c, task, result, err); finishErr != nil {
+			zap.L().Warn("failed to finish CoA task", zap.Error(finishErr))
+		}
+	}
 	if err != nil {
 		return fail(c, http.StatusUnprocessableEntity, "COA_REQUEST_FAILED", "Failed to build Disconnect request", err.Error())
 	}
@@ -214,7 +223,23 @@ func ChangeOnlineSessionAuthorization(c echo.Context) error {
 		return nil
 	}
 
+	filterID, sessionTimeout := "", 0
+	if payload.FilterID != nil {
+		filterID = *payload.FilterID
+	}
+	if payload.SessionTimeout != nil {
+		sessionTimeout = int(*payload.SessionTimeout)
+	}
+	task, taskErr := startCoATask(c, id, identity, target, "coa", filterID, sessionTimeout)
+	if taskErr != nil {
+		zap.L().Warn("failed to persist CoA task before send", zap.Error(taskErr))
+	}
 	result, err := sessionCoAService().CoA(c.Request().Context(), target, identity, changes...)
+	if taskErr == nil {
+		if finishErr := finishCoATask(c, task, result, err); finishErr != nil {
+			zap.L().Warn("failed to finish CoA task", zap.Error(finishErr))
+		}
+	}
 	if err != nil {
 		return fail(c, http.StatusUnprocessableEntity, "COA_REQUEST_FAILED", "Failed to build CoA request", err.Error())
 	}

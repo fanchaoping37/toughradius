@@ -132,7 +132,12 @@ type RadiusOnline struct {
 	AcctInputPackets    int       `json:"acct_input_packets"`
 	AcctOutputPackets   int       `json:"acct_output_packets"`
 	AcctStartTime       time.Time `gorm:"index" json:"acct_start_time"`
-	LastUpdate          time.Time `json:"last_update"`
+	// EventTimestamp is RFC 2869 §5.3 Event-Timestamp (type 55) reported by the
+	// NAS. It is preferred over local wall-clock time for billing attribution.
+	EventTimestamp time.Time `gorm:"index" json:"event_timestamp"`
+	// AcctDelayTime is RFC 2866 §5.2 Acct-Delay-Time (type 41) in seconds.
+	AcctDelayTime int `json:"acct_delay_time"`
+	LastUpdate    time.Time `json:"last_update"`
 	// ProxyUpstream records the name of the upstream server this session was
 	// authenticated against (empty for locally-authenticated sessions). It
 	// allows admin-triggered disconnect/CoA operations to be relayed upstream.
@@ -204,6 +209,18 @@ type RadiusAccounting struct {
 	LastUpdate          time.Time `json:"last_update"`
 	AcctStartTime       time.Time `gorm:"index" json:"acct_start_time"`
 	AcctStopTime        time.Time `gorm:"index" json:"acct_stop_time"`
+	// EventTimestamp/AcctDelayTime are kept on the historical ledger so
+	// billing can attribute usage to the NAS event time, not DB insert time.
+	EventTimestamp time.Time `gorm:"index" json:"event_timestamp"`
+	AcctDelayTime  int       `json:"acct_delay_time"`
+	// AcctStatusType is RFC 2866 §5.1: 1=Start, 2=Stop, 3=Interim-Update.
+	AcctStatusType int `json:"acct_status_type"`
+	// DedupKey is derived per RFC 5080 §2.2.2 from source endpoint,
+	// Identifier and Acct-Session-Id/Event-Timestamp.
+	DedupKey string `gorm:"index" json:"dedup_key"`
+	// RawAttrs is a sanitized JSON snapshot of the request attributes
+	// (passwords and EAP payloads masked) for packet-level troubleshooting.
+	RawAttrs string `json:"raw_attrs"`
 }
 
 // TableName Specify table name

@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/talkincode/toughradius/v9/pkg/common"
 	"gopkg.in/yaml.v3"
@@ -180,11 +181,22 @@ type RadiusdConfig struct {
 type PortalConfig struct {
 	Enabled    bool   `yaml:"enabled" json:"enabled"`
 	BindHost   string `yaml:"bind_host" json:"bind_host"`
-	BindPort   int    `yaml:"bind_port" json:"bind_port"`   // server listener, default 50100
-	NASPort    int    `yaml:"nas_port" json:"nas_port"`     // NAS Portal port, default 2000
-	Timeout    int    `yaml:"timeout" json:"timeout"`       // seconds, default 5
-	Retry      int    `yaml:"retry" json:"retry"`           // retransmissions, default 2
+	BindPort   int    `yaml:"bind_port" json:"bind_port"`     // server listener, default 50100
+	NASPort    int    `yaml:"nas_port" json:"nas_port"`       // NAS Portal port, default 2000
+	Timeout    int    `yaml:"timeout" json:"timeout"`         // seconds, default 5
+	Retry      int    `yaml:"retry" json:"retry"`             // retransmissions, default 2
 	SessionTTL int    `yaml:"session_ttl" json:"session_ttl"` // seconds, default 600
+}
+
+// OpenAPIConfig configures the northbound REST API security layer.
+// Credentials maps AppKey to AppSecret; an empty map disables all open API
+// requests (fail-closed). Secrets are never returned by any API.
+type OpenAPIConfig struct {
+	Enabled        bool              `yaml:"enabled" json:"enabled"`
+	Credentials    map[string]string `yaml:"credentials" json:"credentials"`
+	QPS            int               `yaml:"qps" json:"qps"`
+	NonceTTL       int               `yaml:"nonce_ttl" json:"nonce_ttl"`
+	IdempotencyTTL int               `yaml:"idempotency_ttl" json:"idempotency_ttl"`
 }
 
 // LogConfig holds logging settings using zap structured logger.
@@ -223,6 +235,7 @@ type AppConfig struct {
 	Database DBConfig      `yaml:"database" json:"database"`
 	Radiusd  RadiusdConfig `yaml:"radiusd" json:"radiusd"`
 	Portal   PortalConfig  `yaml:"portal" json:"portal"`
+	OpenAPI  OpenAPIConfig `yaml:"openapi" json:"openapi"`
 	Logger   LogConfig     `yaml:"logger" json:"logger"`
 }
 
@@ -554,6 +567,13 @@ var DefaultAppConfig = &AppConfig{
 		Retry:      2,
 		SessionTTL: 600,
 	},
+	OpenAPI: OpenAPIConfig{
+		Enabled:        false,
+		Credentials:    map[string]string{},
+		QPS:            20,
+		NonceTTL:       300,
+		IdempotencyTTL: 86400,
+	},
 	Logger: LogConfig{
 		Mode:       "development",
 		FileEnable: true,
@@ -671,8 +691,28 @@ func LoadConfig(cfile string) *AppConfig {
 	setEnvIntValue("TOUGHRADIUS_PORTAL_RETRY", &cfg.Portal.Retry)
 	setEnvIntValue("TOUGHRADIUS_PORTAL_SESSION_TTL", &cfg.Portal.SessionTTL)
 
+	setEnvBoolValue("TOUGHRADIUS_OPENAPI_ENABLED", &cfg.OpenAPI.Enabled)
+	if raw := os.Getenv("TOUGHRADIUS_OPENAPI_CREDENTIALS"); raw != "" {
+		cfg.OpenAPI.Credentials = parseAppCredentials(raw)
+	}
+	setEnvIntValue("TOUGHRADIUS_OPENAPI_QPS", &cfg.OpenAPI.QPS)
+	setEnvIntValue("TOUGHRADIUS_OPENAPI_NONCE_TTL", &cfg.OpenAPI.NonceTTL)
+	setEnvIntValue("TOUGHRADIUS_OPENAPI_IDEMPOTENCY_TTL", &cfg.OpenAPI.IdempotencyTTL)
+
 	setEnvValue("TOUGHRADIUS_LOGGER_MODE", &cfg.Logger.Mode)
 	setEnvBoolValue("TOUGHRADIUS_LOGGER_FILE_ENABLE", &cfg.Logger.FileEnable)
 
 	return cfg
+}
+
+// parseAppCredentials parses "key1:secret1,key2:secret2" into an AppKey map.
+func parseAppCredentials(raw string) map[string]string {
+	result := make(map[string]string)
+	for _, entry := range strings.Split(raw, ",") {
+		parts := strings.SplitN(strings.TrimSpace(entry), ":", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			result[parts[0]] = parts[1]
+		}
+	}
+	return result
 }

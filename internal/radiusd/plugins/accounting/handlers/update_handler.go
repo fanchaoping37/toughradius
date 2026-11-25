@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"time"
-
 	"github.com/talkincode/toughradius/v9/internal/domain"
 	"github.com/talkincode/toughradius/v9/internal/radiusd/plugins/accounting"
 	vendorparserspkg "github.com/talkincode/toughradius/v9/internal/radiusd/plugins/vendorparsers"
@@ -73,18 +71,21 @@ func (h *UpdateHandler) Handle(acctCtx *accounting.AccountingContext) error {
 // repository path keys by Acct-Session-Id and only patches counters/timestamps.
 func buildOnlineFromRequest(acctCtx *accounting.AccountingContext, vr *vendorparserspkg.VendorRequest) domain.RadiusOnline {
 	r := acctCtx.Request
-	acctInputOctets := int(rfc2866.AcctInputOctets_Get(r.Packet))
-	acctInputGigawords := int(rfc2869.AcctInputGigawords_Get(r.Packet))
-	acctOutputOctets := int(rfc2866.AcctOutputOctets_Get(r.Packet))
-	acctOutputGigawords := int(rfc2869.AcctOutputGigawords_Get(r.Packet))
+	acctInputOctets := rfc2866.AcctInputOctets_Get(r.Packet)
+	acctInputGigawords := rfc2869.AcctInputGigawords_Get(r.Packet)
+	acctOutputOctets := rfc2866.AcctOutputOctets_Get(r.Packet)
+	acctOutputGigawords := rfc2869.AcctOutputGigawords_Get(r.Packet)
+	eventTime := accounting.EventTime(r.Packet)
 
 	return domain.RadiusOnline{
 		AcctSessionId:     rfc2866.AcctSessionID_GetString(r.Packet),
 		AcctSessionTime:   int(rfc2866.AcctSessionTime_Get(r.Packet)),
-		AcctInputTotal:    int64(acctInputOctets) + int64(acctInputGigawords)*4*1024*1024*1024,
-		AcctOutputTotal:   int64(acctOutputOctets) + int64(acctOutputGigawords)*4*1024*1024*1024,
+		AcctInputTotal:    accounting.GigawordOctets(uint32(acctInputOctets), uint32(acctInputGigawords)),
+		AcctOutputTotal:   accounting.GigawordOctets(uint32(acctOutputOctets), uint32(acctOutputGigawords)),
 		AcctInputPackets:  int(rfc2866.AcctInputPackets_Get(r.Packet)),
 		AcctOutputPackets: int(rfc2866.AcctOutputPackets_Get(r.Packet)),
-		LastUpdate:        time.Now(),
+		EventTimestamp:    eventTime,
+		AcctDelayTime:     int(rfc2866.AcctDelayTime_Get(r.Packet)),
+		LastUpdate:        eventTime,
 	}
 }

@@ -59,7 +59,13 @@ func (h *StopHandler) Handle(acctCtx *accounting.AccountingContext) error {
 	sessionId := rfc2866.AcctSessionID_GetString(acctCtx.Request.Packet)
 
 	// Update accounting record stop time
+	eventTime := accounting.EventTime(acctCtx.Request.Packet)
 	acctRecord := domain.RadiusAccounting{
+		EventTimestamp:    eventTime,
+		AcctDelayTime:     int(rfc2866.AcctDelayTime_Get(acctCtx.Request.Packet)),
+		AcctStatusType:    int(rfc2866.AcctStatusType_Value_Stop),
+		DedupKey:          accounting.DedupKey(acctCtx.Request, acctCtx.NASIP),
+		RawAttrs:          accounting.SanitizedAttributes(acctCtx.Request.Packet),
 		AcctInputTotal:    online.AcctInputTotal,
 		AcctOutputTotal:   online.AcctOutputTotal,
 		AcctInputPackets:  online.AcctInputPackets,

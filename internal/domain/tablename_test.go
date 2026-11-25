@@ -98,10 +98,23 @@ func TestTableNameUniqueness(t *testing.T) {
 		"radius_user":                 true,
 		"radius_online":               true,
 		"radius_session_action_audit": true,
+		"radius_coa_task":             true,
 		"radius_accounting":           true,
 		"radius_upstream":             true,
 		"radius_realm_route":          true,
 		"portal_nas":                  true,
+		"radius_acct_record":          true,
+		"radius_acct_dedup":           true,
+		"billing_account":             true,
+		"billing_asset_flow":          true,
+		"billing_plan":                true,
+		"billing_subscription":        true,
+		"billing_session_usage":       true,
+		"billing_charge":              true,
+		"billing_order":               true,
+		"billing_payment":             true,
+		"billing_card_batch":          true,
+		"billing_card":                true,
 	}
 
 	assert.Equal(t, len(expectedNames), len(tableNames), "Table name count should match")

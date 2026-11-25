@@ -6,6 +6,7 @@ import (
 
 	"github.com/talkincode/toughradius/v9/internal/app"
 	radiuserrors "github.com/talkincode/toughradius/v9/internal/radiusd/errors"
+	acctpkg "github.com/talkincode/toughradius/v9/internal/radiusd/plugins/accounting"
 	vendorparserspkg "github.com/talkincode/toughradius/v9/internal/radiusd/plugins/vendorparsers"
 	"go.uber.org/zap"
 	"layeh.com/radius"
@@ -93,6 +94,26 @@ func (s *AcctService) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
 		return
 	}
 
+	// RFC 5080 §2.2.2: cache responses by (source IP, source port,
+	// Identifier). A retransmitted accounting packet is answered with the
+	// same Accounting-Response but must not mutate session or billing state.
+	fresh, dedupErr := acctpkg.RecordPacket(r.Context(), s.appCtx.DB(), r, nasrip, username)
+	if dedupErr != nil {
+		zap.L().Warn("accounting dedup store unavailable",
+			zap.String("namespace", "radius"),
+			zap.String("username", username),
+			zap.Error(dedupErr),
+		)
+	}
+	if !fresh {
+		app.IncRadiusMetric(app.MetricsRadiusAcctDrop)
+		zap.L().Debug("duplicate accounting packet ignored",
+			zap.String("namespace", "radius"),
+			zap.String("username", username),
+			zap.String("session_id", rfc2866.AcctSessionID_GetString(r.Packet)),
+		)
+	}
+
 	vendorReq := s.ParseVendor(r, nas.VendorCode)
 
 	responseSent := s.SendResponse(w, r)
@@ -103,6 +124,10 @@ func (s *AcctService) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
 			zap.String("namespace", "radius"),
 			zap.String("metrics", app.MetricsRadiusAccounting),
 		)
+	}
+
+	if !fresh {
+		return
 	}
 
 	// Proxy forwarding + replication side-channels (async upstream I/O).
