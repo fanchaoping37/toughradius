@@ -116,5 +116,9 @@ func InitPlugins(appCtx app.ConfigManagerProvider, sessionRepo repository.Sessio
 		registry.RegisterEAPHandler(eaphandlers.NewTTLSHandler())
 	}
 
+	// EAP-pwd (EAP type 52, RFC 5931) password-authenticated key exchange on
+	// NIST P-256 (group 19); needs no PKI or hardware.
+	registry.RegisterEAPHandler(eaphandlers.NewPWDHandler())
+
 	// Vendor parsers under vendor/parsers register themselves via init()
 }

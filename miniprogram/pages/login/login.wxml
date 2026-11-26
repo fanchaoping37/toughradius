@@ -1,0 +1,17 @@
+<view class="container">
+  <view class="card">
+    <view class="title">校园网认证</view>
+    <view class="field">
+      <text class="label">用户名</text>
+      <input class="input" placeholder="学号/工号" bindinput="onUsername" value="{{username}}" />
+    </view>
+    <view class="field">
+      <text class="label">密码</text>
+      <input class="input" password placeholder="密码" bindinput="onPassword" value="{{password}}" />
+    </view>
+    <button class="btn" type="primary" loading="{{loading}}" bindtap="onLogin">登录</button>
+    <button class="btn-secondary" size="mini" bindtap="onLogout">下线</button>
+    <view wx:if="{{message}}" class="message">{{message}}</view>
+    <view class="hint">登录后将自动完成 Portal 挑战与认证</view>
+  </view>
+</view>

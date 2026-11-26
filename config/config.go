@@ -188,6 +188,53 @@ type PortalConfig struct {
 	SessionTTL int    `yaml:"session_ttl" json:"session_ttl"` // seconds, default 600
 }
 
+// CaptiveConfig configures HTTP 302 redirection and the built-in login page.
+// The upstream project forbids hosting a login page by default; enabling this
+// section is an explicit second-development opt-in.
+type CaptiveConfig struct {
+	Enabled       bool     `yaml:"enabled" json:"enabled"`
+	BindAddr      string   `yaml:"bind_addr" json:"bind_addr"`
+	LoginPath     string   `yaml:"login_path" json:"login_path"`
+	PortalURL     string   `yaml:"portal_url" json:"portal_url"`
+	AllowedHosts  []string `yaml:"allowed_hosts" json:"allowed_hosts"`
+	WhitelistCIDR []string `yaml:"whitelist_cidr" json:"whitelist_cidr"`
+	AuthorizedTTL int      `yaml:"authorized_ttl" json:"authorized_ttl"`
+}
+
+// DHCPConfig configures the RFC 2131 DHCPv4 server and Portal URL delivery.
+type DHCPConfig struct {
+	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	BindAddr  string `yaml:"bind_addr" json:"bind_addr"`
+	ServerIP  string `yaml:"server_ip" json:"server_ip"`
+	Network   string `yaml:"network" json:"network"`
+	Gateway   string `yaml:"gateway" json:"gateway"`
+	DNS       string `yaml:"dns" json:"dns"`
+	Start     string `yaml:"start" json:"start"`
+	End       string `yaml:"end" json:"end"`
+	Lease     int    `yaml:"lease" json:"lease"`
+	PortalURL string `yaml:"portal_url" json:"portal_url"`
+}
+
+// DNSRedirectConfig configures RFC 1035 DNS redirection (deployment practice).
+type DNSRedirectConfig struct {
+	Enabled   bool     `yaml:"enabled" json:"enabled"`
+	BindAddr  string   `yaml:"bind_addr" json:"bind_addr"`
+	PortalIP  string   `yaml:"portal_ip" json:"portal_ip"`
+	Upstream  string   `yaml:"upstream" json:"upstream"`
+	Whitelist []string `yaml:"whitelist" json:"whitelist"`
+	TTL       int      `yaml:"ttl" json:"ttl"`
+}
+
+// IPv6Config configures the DHCPv6 (RFC 3315/8415) server for IPv6 tracing.
+type IPv6Config struct {
+	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	BindAddr  string `yaml:"bind_addr" json:"bind_addr"`
+	Prefix    string `yaml:"prefix" json:"prefix"`
+	DNS       string `yaml:"dns" json:"dns"`
+	PortalURL string `yaml:"portal_url" json:"portal_url"`
+	Lease     int    `yaml:"lease" json:"lease"`
+}
+
 // OpenAPIConfig configures the northbound REST API security layer.
 // Credentials maps AppKey to AppSecret; an empty map disables all open API
 // requests (fail-closed). Secrets are never returned by any API.
@@ -230,13 +277,17 @@ type LogConfig struct {
 // The configuration is loaded once at application startup via LoadConfig()
 // and accessed globally through app.GApp().
 type AppConfig struct {
-	System   SysConfig     `yaml:"system" json:"system"`
-	Web      WebConfig     `yaml:"web" json:"web"`
-	Database DBConfig      `yaml:"database" json:"database"`
-	Radiusd  RadiusdConfig `yaml:"radiusd" json:"radiusd"`
-	Portal   PortalConfig  `yaml:"portal" json:"portal"`
-	OpenAPI  OpenAPIConfig `yaml:"openapi" json:"openapi"`
-	Logger   LogConfig     `yaml:"logger" json:"logger"`
+	System      SysConfig         `yaml:"system" json:"system"`
+	Web         WebConfig         `yaml:"web" json:"web"`
+	Database    DBConfig          `yaml:"database" json:"database"`
+	Radiusd     RadiusdConfig     `yaml:"radiusd" json:"radiusd"`
+	Portal      PortalConfig      `yaml:"portal" json:"portal"`
+	Captive     CaptiveConfig     `yaml:"captive" json:"captive"`
+	DHCP        DHCPConfig        `yaml:"dhcp" json:"dhcp"`
+	DNSRedirect DNSRedirectConfig `yaml:"dns_redirect" json:"dns_redirect"`
+	IPv6        IPv6Config        `yaml:"ipv6" json:"ipv6"`
+	OpenAPI     OpenAPIConfig     `yaml:"openapi" json:"openapi"`
+	Logger      LogConfig         `yaml:"logger" json:"logger"`
 }
 
 // GetLogDir returns the full path to the logs directory.
@@ -567,6 +618,12 @@ var DefaultAppConfig = &AppConfig{
 		Retry:      2,
 		SessionTTL: 600,
 	},
+	Captive: CaptiveConfig{
+		Enabled: false, BindAddr: ":80", LoginPath: "/portal/login", AuthorizedTTL: 86400,
+	},
+	DHCP:        DHCPConfig{Enabled: false, BindAddr: ":67", Lease: 3600},
+	DNSRedirect: DNSRedirectConfig{Enabled: false, BindAddr: ":53", TTL: 0},
+	IPv6:        IPv6Config{Enabled: false, BindAddr: ":547", Lease: 7200},
 	OpenAPI: OpenAPIConfig{
 		Enabled:        false,
 		Credentials:    map[string]string{},
@@ -690,6 +747,42 @@ func LoadConfig(cfile string) *AppConfig {
 	setEnvIntValue("TOUGHRADIUS_PORTAL_TIMEOUT", &cfg.Portal.Timeout)
 	setEnvIntValue("TOUGHRADIUS_PORTAL_RETRY", &cfg.Portal.Retry)
 	setEnvIntValue("TOUGHRADIUS_PORTAL_SESSION_TTL", &cfg.Portal.SessionTTL)
+
+	setEnvBoolValue("TOUGHRADIUS_CAPTIVE_ENABLED", &cfg.Captive.Enabled)
+	setEnvValue("TOUGHRADIUS_CAPTIVE_BIND_ADDR", &cfg.Captive.BindAddr)
+	setEnvValue("TOUGHRADIUS_CAPTIVE_LOGIN_PATH", &cfg.Captive.LoginPath)
+	setEnvValue("TOUGHRADIUS_CAPTIVE_PORTAL_URL", &cfg.Captive.PortalURL)
+	if raw := os.Getenv("TOUGHRADIUS_CAPTIVE_WHITELIST"); raw != "" {
+		cfg.Captive.WhitelistCIDR = strings.Split(raw, ",")
+	}
+	setEnvIntValue("TOUGHRADIUS_CAPTIVE_AUTHORIZED_TTL", &cfg.Captive.AuthorizedTTL)
+
+	setEnvBoolValue("TOUGHRADIUS_DHCP_ENABLED", &cfg.DHCP.Enabled)
+	setEnvValue("TOUGHRADIUS_DHCP_BIND_ADDR", &cfg.DHCP.BindAddr)
+	setEnvValue("TOUGHRADIUS_DHCP_SERVER_IP", &cfg.DHCP.ServerIP)
+	setEnvValue("TOUGHRADIUS_DHCP_NETWORK", &cfg.DHCP.Network)
+	setEnvValue("TOUGHRADIUS_DHCP_GATEWAY", &cfg.DHCP.Gateway)
+	setEnvValue("TOUGHRADIUS_DHCP_DNS", &cfg.DHCP.DNS)
+	setEnvValue("TOUGHRADIUS_DHCP_START", &cfg.DHCP.Start)
+	setEnvValue("TOUGHRADIUS_DHCP_END", &cfg.DHCP.End)
+	setEnvValue("TOUGHRADIUS_DHCP_PORTAL_URL", &cfg.DHCP.PortalURL)
+	setEnvIntValue("TOUGHRADIUS_DHCP_LEASE", &cfg.DHCP.Lease)
+
+	setEnvBoolValue("TOUGHRADIUS_DNSREDIRECT_ENABLED", &cfg.DNSRedirect.Enabled)
+	setEnvValue("TOUGHRADIUS_DNSREDIRECT_BIND_ADDR", &cfg.DNSRedirect.BindAddr)
+	setEnvValue("TOUGHRADIUS_DNSREDIRECT_PORTAL_IP", &cfg.DNSRedirect.PortalIP)
+	setEnvValue("TOUGHRADIUS_DNSREDIRECT_UPSTREAM", &cfg.DNSRedirect.Upstream)
+	if raw := os.Getenv("TOUGHRADIUS_DNSREDIRECT_WHITELIST"); raw != "" {
+		cfg.DNSRedirect.Whitelist = strings.Split(raw, ",")
+	}
+	setEnvIntValue("TOUGHRADIUS_DNSREDIRECT_TTL", &cfg.DNSRedirect.TTL)
+
+	setEnvBoolValue("TOUGHRADIUS_IPV6_ENABLED", &cfg.IPv6.Enabled)
+	setEnvValue("TOUGHRADIUS_IPV6_BIND_ADDR", &cfg.IPv6.BindAddr)
+	setEnvValue("TOUGHRADIUS_IPV6_PREFIX", &cfg.IPv6.Prefix)
+	setEnvValue("TOUGHRADIUS_IPV6_DNS", &cfg.IPv6.DNS)
+	setEnvValue("TOUGHRADIUS_IPV6_PORTAL_URL", &cfg.IPv6.PortalURL)
+	setEnvIntValue("TOUGHRADIUS_IPV6_LEASE", &cfg.IPv6.Lease)
 
 	setEnvBoolValue("TOUGHRADIUS_OPENAPI_ENABLED", &cfg.OpenAPI.Enabled)
 	if raw := os.Getenv("TOUGHRADIUS_OPENAPI_CREDENTIALS"); raw != "" {

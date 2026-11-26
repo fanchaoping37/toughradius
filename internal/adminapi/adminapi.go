@@ -43,6 +43,7 @@ func Init(appCtx app.AppContext) {
 	registerPortalRoutes()
 	registerBillingRoutes()
 	registerCoATaskRoutes()
+	registerCaptiveRoutes()
 	registerOpenAPIRoutes()
 	registerSettingsRoutes()
 	registerNodesRoutes()

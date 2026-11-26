@@ -1,0 +1,13 @@
+{
+  "description": "ToughRADIUS Portal login mini program",
+  "appid": "touristappid",
+  "projectname": "toughradius-portal",
+  "miniprogramRoot": "./",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "postcss": true,
+    "minified": true
+  },
+  "compileType": "miniprogram"
+}

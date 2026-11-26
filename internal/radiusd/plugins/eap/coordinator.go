@@ -132,6 +132,8 @@ func (c *Coordinator) handleIdentityResponse(ctx *EAPContext, configuredMethod s
 		handler, _ = c.handlerRegistry.GetHandler(TypeTTLS)
 	case "eap-peap":
 		handler, _ = c.handlerRegistry.GetHandler(TypePEAP)
+	case "eap-pwd":
+		handler, _ = c.handlerRegistry.GetHandler(TypePWD)
 	default:
 		// Default to MD5
 		handler, _ = c.handlerRegistry.GetHandler(TypeMD5Challenge)

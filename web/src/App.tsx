@@ -71,6 +71,14 @@ import {
   CertificateShow,
   CertificateIcon,
 } from './resources/certificates';
+import {
+  ProxyUpstreamList, ProxyUpstreamEdit, ProxyUpstreamCreate, ProxyUpstreamShow, ProxyUpstreamIcon,
+  RealmRouteList, RealmRouteEdit, RealmRouteCreate, RealmRouteShow, RealmRouteIcon,
+  PortalNasList, PortalNasEdit, PortalNasCreate, PortalNasShow, PortalNasIcon,
+  BillingAccountList, BillingAccountShow, BillingIconExport,
+  BillingOrderList, BillingOrderShow,
+  CoATaskList, CoATaskShow, CoATaskIcon,
+} from './resources/proxy';
 
 const App = () => (
   <Admin
@@ -156,6 +164,17 @@ const App = () => (
       show={CertificateShow}
       icon={CertificateIcon}
     />
+
+    {/* 二开：RADIUS 代理与漫游 */}
+    <Resource name="radius-upstreams" list={ProxyUpstreamList} edit={ProxyUpstreamEdit}
+      create={ProxyUpstreamCreate} show={ProxyUpstreamShow} icon={ProxyUpstreamIcon} />
+    <Resource name="radius-realm-routes" list={RealmRouteList} edit={RealmRouteEdit}
+      create={RealmRouteCreate} show={RealmRouteShow} icon={RealmRouteIcon} />
+    <Resource name="portal-nases" list={PortalNasList} edit={PortalNasEdit}
+      create={PortalNasCreate} show={PortalNasShow} icon={PortalNasIcon} />
+    <Resource name="billing/accounts" list={BillingAccountList} show={BillingAccountShow} icon={BillingIconExport} />
+    <Resource name="billing/orders" list={BillingOrderList} show={BillingOrderShow} />
+    <Resource name="coa-tasks" list={CoATaskList} show={CoATaskShow} icon={CoATaskIcon} />
 
     {/* 自定义路由 */}
     <CustomRoutes>

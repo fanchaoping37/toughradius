@@ -227,6 +227,11 @@ func NewAdminServer(appCtx app.AppContext) *AdminServer {
 		}
 	})
 
+	// Optional captive portal HTTP 302 redirect (second-development module).
+	// The middleware itself skips API/auth paths, so the Portal bridge remains
+	// reachable for the login flow.
+	s.root.Use(captiveMiddleware)
+
 	return s
 }
 

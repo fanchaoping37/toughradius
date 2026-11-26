@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/talkincode/toughradius/v9/config"
+	"github.com/talkincode/toughradius/v9/internal/accessnet"
 	"github.com/talkincode/toughradius/v9/internal/adminapi"
 	"github.com/talkincode/toughradius/v9/internal/app"
 	"github.com/talkincode/toughradius/v9/internal/domain"
@@ -161,6 +163,26 @@ func main() {
 
 		g.Go(func() error {
 			return portalServer.Listen()
+		})
+	}
+
+	// Start optional access-network services (DHCP/DNS redirect/DHCPv6).
+	// Each service is opt-in via config; disabled services add no listeners.
+	accessCfg := application.Config()
+	accessSvc, err := accessnet.Start(context.Background(), *accessCfg, func(f func() error) {
+		g.Go(f)
+	})
+	if err != nil {
+		log.Printf("accessnet partial configuration error: %v", err)
+	}
+	defer accessSvc.Stop()
+
+	// Install the captive HTTP 302 redirector into the web server when enabled.
+	if accessSvc.Captive != nil {
+		webserver.SetCaptiveRedirector(accessSvc.Captive)
+		adminapi.SetCaptiveAuthorizer(func(ip net.IP, ttl time.Duration) bool {
+			accessSvc.Captive.Authorize(ip, ttl)
+			return true
 		})
 	}
 

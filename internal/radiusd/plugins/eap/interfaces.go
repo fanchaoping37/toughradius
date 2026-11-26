@@ -23,13 +23,18 @@ const (
 	TypeMD5Challenge = 4  // MD5-Challenge
 	TypeOTP          = 5  // One-Time Password
 	TypeGTC          = 6  // Generic Token Card
-	TypeTLS          = 13 // EAP-TLS
+	TypeTLS          = 13 // EAP-TLS (RFC 5216)
+	TypeSIM          = 18 // EAP-SIM (RFC 4186), requires AuC triplets
 	TypeTTLS         = 21 // EAP-TTLS (Tunneled TLS), IANA EAP method type 21
+	TypeAKA          = 23 // EAP-AKA (RFC 4187), requires AuC vectors
 	TypePEAP         = 25 // Protected EAP (PEAP), IANA EAP method type 25
-	TypeMSCHAPv2     = 26 // EAP-MSCHAPv2
-	// TypeTLV is EAP-TLV (IANA type 33). PEAPv0 uses it for the Result /
-	// Cryptobinding TLVs after the inner method (Microsoft [MS-PEAP] §2.2.8).
-	TypeTLV = 33
+	TypeMSCHAPv2     = 26 // historical value used by this codebase
+	TypeMSCHAPv2IANA = 29 // official IANA EAP type; both accepted for compatibility
+	TypeTLV          = 33 // EAP-TLV (Microsoft [MS-PEAP] §2.2.8)
+	TypeFAST         = 43 // EAP-FAST (RFC 4851)
+	TypePWD          = 52 // EAP-pwd (RFC 5931); NOT 103
+	TypeAKAPrime     = 50 // EAP-AKA' (RFC 9048)
+	TypeTEAP         = 55 // EAP-TEAP (RFC 7170); NOT 53
 )
 
 // EAPState holds EAP status data

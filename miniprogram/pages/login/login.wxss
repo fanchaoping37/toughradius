@@ -1,0 +1,10 @@
+.container { min-height: 100vh; background: #f5f6f8; display: flex; align-items: center; justify-content: center; }
+.card { width: 86%; background: #fff; border-radius: 24rpx; padding: 48rpx 40rpx; box-shadow: 0 8rpx 40rpx rgba(0,0,0,.06); }
+.title { font-size: 40rpx; font-weight: 600; text-align: center; margin-bottom: 48rpx; color: #1f2937; }
+.field { margin-bottom: 28rpx; }
+.label { display: block; font-size: 26rpx; color: #4b5563; margin-bottom: 12rpx; }
+.input { border: 2rpx solid #d1d5db; border-radius: 12rpx; padding: 20rpx; font-size: 30rpx; }
+.btn { margin-top: 24rpx; border-radius: 12rpx; }
+.btn-secondary { margin-top: 20rpx; }
+.message { margin-top: 28rpx; font-size: 28rpx; color: #b91c1c; text-align: center; }
+.hint { margin-top: 32rpx; font-size: 24rpx; color: #9ca3af; text-align: center; }
