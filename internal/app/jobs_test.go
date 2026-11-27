@@ -123,12 +123,13 @@ func accountingUsernames(t *testing.T, db *gorm.DB) []string {
 // TestInitJobRegistersCleanup is the regression guard for M6.4: SchedClearExpireData
 // was defined but never registered with cron, so expired online/accounting data was
 // never auto-purged. initJob must now schedule it alongside the monitor and
-// operation-log jobs (3 cron entries total).
+// operation-log jobs and the commercial accounting reconciliation job
+// (4 cron entries total).
 func TestInitJobRegistersCleanup(t *testing.T) {
 	a := &Application{appConfig: &config.AppConfig{}}
 	a.initJob()
 	defer a.sched.Stop()
 
-	require.Len(t, a.sched.Entries(), 3,
-		"expected monitor + operation-log cleanup + expire-data cleanup cron entries")
+	require.Len(t, a.sched.Entries(), 4,
+		"expected monitor + operation-log cleanup + expire-data cleanup + accounting reconciliation cron entries")
 }

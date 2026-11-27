@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"os"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/process"
+	"github.com/talkincode/toughradius/v9/internal/billing"
 	"github.com/talkincode/toughradius/v9/internal/domain"
 	"github.com/talkincode/toughradius/v9/pkg/metrics"
 	"go.uber.org/zap"
@@ -48,7 +50,58 @@ func (a *Application) initJob() {
 		zap.S().Errorf("init job error %s", err.Error())
 	}
 
+	_, err = a.sched.AddFunc("@every 5m", func() {
+		go a.SchedAccountingReconciliation()
+	})
+	if err != nil {
+		zap.S().Errorf("init job error %s", err.Error())
+	}
+
 	a.sched.Start()
+}
+
+// SchedAccountingReconciliation closes Stop-Missing sessions and replays
+// accounting packets that were never consumed by the normal handler. Both
+// operations are idempotent, so overlapping/crashed runs cannot double-charge.
+func (a *Application) SchedAccountingReconciliation() {
+	defer func() {
+		if err := recover(); err != nil {
+			zap.S().Error("accounting reconciliation panic", err)
+		}
+	}()
+	if a.gormDB == nil {
+		return
+	}
+	engine := billing.NewEngine(a.gormDB)
+	interim := a.ConfigMgr().GetInt("radius", "AcctInterimInterval")
+	if interim <= 0 {
+		interim = 300
+	}
+	// Require several missed interim intervals before declaring a session
+	// stale, matching SchedClearExpireData's online-session grace period.
+	cutoff := time.Now().UTC().Add(-time.Duration(interim*6) * time.Second)
+	result, err := engine.ReconcileSessions(context.Background(), cutoff, 500)
+	if err != nil {
+		zap.L().Warn("scheduled session reconciliation failed",
+			zap.String("namespace", "billing"), zap.Error(err))
+	} else if result.ClosedMissingStop > 0 || len(result.Errors) > 0 {
+		zap.L().Info("scheduled session reconciliation",
+			zap.String("namespace", "billing"),
+			zap.Int("scanned", result.Scanned),
+			zap.Int("closed", result.ClosedMissingStop),
+			zap.Strings("errors", result.Errors))
+	}
+
+	dead, err := engine.RestoreDeadLetters(context.Background(), 500)
+	if err != nil {
+		zap.L().Warn("scheduled dead-letter replay failed",
+			zap.String("namespace", "billing"), zap.Error(err))
+	} else if dead.Replayed > 0 || len(dead.Errors) > 0 {
+		zap.L().Info("scheduled dead-letter replay",
+			zap.String("namespace", "billing"),
+			zap.Int("replayed", dead.Replayed),
+			zap.Strings("errors", dead.Errors))
+	}
 }
 
 // SchedSystemMonitorTask system monitor

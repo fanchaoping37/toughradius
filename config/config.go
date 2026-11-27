@@ -246,6 +246,56 @@ type OpenAPIConfig struct {
 	IdempotencyTTL int               `yaml:"idempotency_ttl" json:"idempotency_ttl"`
 }
 
+// PaymentConfig holds credentials for verifying payment provider callbacks.
+//
+// Enabled turns on provider signature verification for the payment notification
+// endpoint. Only when it is false and a callback carries an X-Signature header
+// does the endpoint fall back to the legacy plain HMAC over web.secret (see
+// adminapi.PaymentNotify). Production deployments must keep Enabled true and
+// supply only the credentials for the channels they actually use.
+//
+// DefaultChannel is used when a callback carries no explicit channel hint. It
+// accepts the aliases understood by internal/payment (wechat/weixin,
+// alipay/zhifubao, card/yikatong/campus).
+//
+// WeChatAPIv3Key and WeChatCertPEM may contain newlines; environment overrides
+// are copied verbatim and are never trimmed or logged.
+type PaymentConfig struct {
+	Enabled        bool   `yaml:"enabled" json:"enabled"`
+	DefaultChannel string `yaml:"default_channel" json:"default_channel"`
+
+	WeChatAppID     string `yaml:"wechat_app_id" json:"wechat_app_id"`
+	WeChatMchID     string `yaml:"wechat_mch_id" json:"wechat_mch_id"`
+	WeChatAPIv3Key  string `yaml:"wechat_apiv3_key" json:"wechat_apiv3_key"`
+	WeChatCertPEM   string `yaml:"wechat_cert_pem" json:"wechat_cert_pem"`
+	WeChatLegacyKey string `yaml:"wechat_legacy_key" json:"wechat_legacy_key"`
+
+	AlipayAppID     string `yaml:"alipay_app_id" json:"alipay_app_id"`
+	AlipayPublicKey string `yaml:"alipay_public_key" json:"alipay_public_key"`
+
+	CardSecret string `yaml:"card_secret" json:"card_secret"`
+}
+
+// CacheConfig configures the optional Redis-backed store. When disabled or
+// unreachable at startup the application fails closed rather than silently
+// switching to a non-shared cache for distributed idempotency state.
+type CacheConfig struct {
+	Enabled    bool   `yaml:"enabled" json:"enabled"`
+	Addr       string `yaml:"addr" json:"addr"`
+	Password   string `yaml:"password" json:"password"`
+	DB         int    `yaml:"db" json:"db"`
+	TTLSeconds int    `yaml:"ttl_seconds" json:"ttl_seconds"`
+}
+
+// AnalyticsConfig configures optional ClickHouse archiving of raw RADIUS
+// accounting packets. It is disabled unless a DSN is provided.
+type AnalyticsConfig struct {
+	Enabled      bool   `yaml:"enabled" json:"enabled"`
+	DSN          string `yaml:"dsn" json:"dsn"`
+	BatchSize    int    `yaml:"batch_size" json:"batch_size"`
+	FlushSeconds int    `yaml:"flush_seconds" json:"flush_seconds"`
+}
+
 // LogConfig holds logging settings using zap structured logger.
 //
 // Mode can be "development" or "production":
@@ -287,7 +337,27 @@ type AppConfig struct {
 	DNSRedirect DNSRedirectConfig `yaml:"dns_redirect" json:"dns_redirect"`
 	IPv6        IPv6Config        `yaml:"ipv6" json:"ipv6"`
 	OpenAPI     OpenAPIConfig     `yaml:"openapi" json:"openapi"`
+	Payment     PaymentConfig     `yaml:"payment" json:"payment"`
+	Cache       CacheConfig       `yaml:"cache" json:"cache"`
+	Analytics   AnalyticsConfig   `yaml:"analytics" json:"analytics"`
 	Logger      LogConfig         `yaml:"logger" json:"logger"`
+}
+
+// runtimePath resolves a path relative to System.Workdir while keeping the
+// separator convention of the configured workdir. POSIX-style test/config
+// paths stay slash-separated; native Windows workdirs keep backslashes.
+func (c *AppConfig) runtimePath(parts ...string) string {
+	joined := filepath.Join(append([]string{c.System.Workdir}, parts...)...)
+	if strings.ContainsRune(c.System.Workdir, '\\') {
+		return joined
+	}
+	return filepath.ToSlash(joined)
+}
+
+// isConfiguredAbsolutePath treats a leading slash as absolute even on Windows:
+// configuration files commonly use container-style /etc/... paths.
+func isConfiguredAbsolutePath(path string) bool {
+	return strings.HasPrefix(path, "/") || filepath.IsAbs(path)
 }
 
 // GetLogDir returns the full path to the logs directory.
@@ -298,7 +368,7 @@ type AppConfig struct {
 // Returns:
 //   - string: Absolute path to {Workdir}/logs
 func (c *AppConfig) GetLogDir() string {
-	return filepath.Join(c.System.Workdir, "logs")
+	return c.runtimePath("logs")
 }
 
 // GetPublicDir returns the full path to the public directory.
@@ -309,7 +379,7 @@ func (c *AppConfig) GetLogDir() string {
 // Returns:
 //   - string: Absolute path to {Workdir}/public
 func (c *AppConfig) GetPublicDir() string {
-	return filepath.Join(c.System.Workdir, "public")
+	return c.runtimePath("public")
 }
 
 // GetPrivateDir returns the full path to the private directory.
@@ -320,7 +390,7 @@ func (c *AppConfig) GetPublicDir() string {
 // Returns:
 //   - string: Absolute path to {Workdir}/private
 func (c *AppConfig) GetPrivateDir() string {
-	return filepath.Join(c.System.Workdir, "private")
+	return c.runtimePath("private")
 }
 
 // GetDataDir returns the full path to the data directory.
@@ -332,7 +402,7 @@ func (c *AppConfig) GetPrivateDir() string {
 // Returns:
 //   - string: Absolute path to {Workdir}/data
 func (c *AppConfig) GetDataDir() string {
-	return filepath.Join(c.System.Workdir, "data")
+	return c.runtimePath("data")
 }
 
 // GetBackupDir returns the full path to the backup directory.
@@ -343,7 +413,7 @@ func (c *AppConfig) GetDataDir() string {
 // Returns:
 //   - string: Absolute path to {Workdir}/backup
 func (c *AppConfig) GetBackupDir() string {
-	return filepath.Join(c.System.Workdir, "backup")
+	return c.runtimePath("backup")
 }
 
 // GetRadsecCaCertPath returns the full path to the RadSec CA certificate.
@@ -359,10 +429,10 @@ func (c *AppConfig) GetBackupDir() string {
 //
 // See also: RFC 6614 for RadSec specification
 func (c *AppConfig) GetRadsecCaCertPath() string {
-	if filepath.IsAbs(c.Radiusd.RadsecCaCert) {
+	if isConfiguredAbsolutePath(c.Radiusd.RadsecCaCert) {
 		return c.Radiusd.RadsecCaCert
 	}
-	return filepath.Join(c.System.Workdir, c.Radiusd.RadsecCaCert)
+	return c.runtimePath(c.Radiusd.RadsecCaCert)
 }
 
 // GetRadsecCertPath returns the full path to the RadSec server certificate.
@@ -378,10 +448,10 @@ func (c *AppConfig) GetRadsecCaCertPath() string {
 //
 // See also: RFC 6614 for RadSec specification
 func (c *AppConfig) GetRadsecCertPath() string {
-	if filepath.IsAbs(c.Radiusd.RadsecCert) {
+	if isConfiguredAbsolutePath(c.Radiusd.RadsecCert) {
 		return c.Radiusd.RadsecCert
 	}
-	return filepath.Join(c.System.Workdir, c.Radiusd.RadsecCert)
+	return c.runtimePath(c.Radiusd.RadsecCert)
 }
 
 // GetRadsecKeyPath returns the full path to the RadSec server private key.
@@ -400,10 +470,10 @@ func (c *AppConfig) GetRadsecCertPath() string {
 //
 // See also: RFC 6614 for RadSec specification
 func (c *AppConfig) GetRadsecKeyPath() string {
-	if filepath.IsAbs(c.Radiusd.RadsecKey) {
+	if isConfiguredAbsolutePath(c.Radiusd.RadsecKey) {
 		return c.Radiusd.RadsecKey
 	}
-	return filepath.Join(c.System.Workdir, c.Radiusd.RadsecKey)
+	return c.runtimePath(c.Radiusd.RadsecKey)
 }
 
 // initDirs creates the required runtime directory structure.
@@ -631,6 +701,12 @@ var DefaultAppConfig = &AppConfig{
 		NonceTTL:       300,
 		IdempotencyTTL: 86400,
 	},
+	// Provider verification is opt-in; no credentials are shipped by default.
+	Payment: PaymentConfig{Enabled: false, DefaultChannel: ""},
+	Cache:   CacheConfig{Enabled: false, TTLSeconds: 300},
+	Analytics: AnalyticsConfig{
+		Enabled: false, BatchSize: 500, FlushSeconds: 10,
+	},
 	Logger: LogConfig{
 		Mode:       "development",
 		FileEnable: true,
@@ -791,6 +867,30 @@ func LoadConfig(cfile string) *AppConfig {
 	setEnvIntValue("TOUGHRADIUS_OPENAPI_QPS", &cfg.OpenAPI.QPS)
 	setEnvIntValue("TOUGHRADIUS_OPENAPI_NONCE_TTL", &cfg.OpenAPI.NonceTTL)
 	setEnvIntValue("TOUGHRADIUS_OPENAPI_IDEMPOTENCY_TTL", &cfg.OpenAPI.IdempotencyTTL)
+
+	// Payment callbacks. Values are copied verbatim: APIv3 keys and PEM
+	// certificates commonly contain newlines that must survive the override.
+	setEnvBoolValue("TOUGHRADIUS_PAYMENT_ENABLED", &cfg.Payment.Enabled)
+	setEnvValue("TOUGHRADIUS_PAYMENT_DEFAULT_CHANNEL", &cfg.Payment.DefaultChannel)
+	setEnvValue("TOUGHRADIUS_PAYMENT_WECHAT_APP_ID", &cfg.Payment.WeChatAppID)
+	setEnvValue("TOUGHRADIUS_PAYMENT_WECHAT_MCH_ID", &cfg.Payment.WeChatMchID)
+	setEnvValue("TOUGHRADIUS_PAYMENT_WECHAT_APIV3_KEY", &cfg.Payment.WeChatAPIv3Key)
+	setEnvValue("TOUGHRADIUS_PAYMENT_WECHAT_CERT_PEM", &cfg.Payment.WeChatCertPEM)
+	setEnvValue("TOUGHRADIUS_PAYMENT_WECHAT_LEGACY_KEY", &cfg.Payment.WeChatLegacyKey)
+	setEnvValue("TOUGHRADIUS_PAYMENT_ALIPAY_APP_ID", &cfg.Payment.AlipayAppID)
+	setEnvValue("TOUGHRADIUS_PAYMENT_ALIPAY_PUBLIC_KEY", &cfg.Payment.AlipayPublicKey)
+	setEnvValue("TOUGHRADIUS_PAYMENT_CARD_SECRET", &cfg.Payment.CardSecret)
+
+	setEnvBoolValue("TOUGHRADIUS_CACHE_ENABLED", &cfg.Cache.Enabled)
+	setEnvValue("TOUGHRADIUS_CACHE_ADDR", &cfg.Cache.Addr)
+	setEnvValue("TOUGHRADIUS_CACHE_PASSWORD", &cfg.Cache.Password)
+	setEnvIntValue("TOUGHRADIUS_CACHE_DB", &cfg.Cache.DB)
+	setEnvIntValue("TOUGHRADIUS_CACHE_TTL_SECONDS", &cfg.Cache.TTLSeconds)
+
+	setEnvBoolValue("TOUGHRADIUS_ANALYTICS_ENABLED", &cfg.Analytics.Enabled)
+	setEnvValue("TOUGHRADIUS_ANALYTICS_DSN", &cfg.Analytics.DSN)
+	setEnvIntValue("TOUGHRADIUS_ANALYTICS_BATCH_SIZE", &cfg.Analytics.BatchSize)
+	setEnvIntValue("TOUGHRADIUS_ANALYTICS_FLUSH_SECONDS", &cfg.Analytics.FlushSeconds)
 
 	setEnvValue("TOUGHRADIUS_LOGGER_MODE", &cfg.Logger.Mode)
 	setEnvBoolValue("TOUGHRADIUS_LOGGER_FILE_ENABLE", &cfg.Logger.FileEnable)

@@ -86,7 +86,15 @@ func (s *Service) ForwardAcct(ctx context.Context, orig *radius.Request, route *
 	if len(pool) == 0 {
 		return
 	}
-	up := s.Select(route, pool)
+	s.ForwardAcctTo(ctx, orig, route, s.Select(route, pool), username)
+}
+
+// ForwardAcctTo forwards an Accounting-Request to a caller-selected upstream.
+// Callers that need to correlate a follow-up action (for example a PANABIT
+// Stop Disconnect-Request) with the exact upstream used for accounting should
+// select the upstream once via UpstreamsFor/Select and use this method, instead
+// of letting ForwardAcct select a second (possibly different) pool member.
+func (s *Service) ForwardAcctTo(ctx context.Context, orig *radius.Request, route *domain.RadiusRealmRoute, up *domain.RadiusUpstream, username string) {
 	if up == nil {
 		return
 	}
@@ -204,6 +212,13 @@ func buildUpstreamPacket(orig *radius.Packet, up *domain.RadiusUpstream, route *
 		if err := rfc2865.UserPassword_SetString(packet, pwd); err != nil {
 			return nil, fmt.Errorf("proxy: set user-password: %w", err)
 		}
+	}
+
+	// Dial-proxy vendor adaptation (Filter-Id defaults, DRCOM attribute
+	// stripping, validated raw VSA injection). It must run before the upstream
+	// Request Authenticator and Message-Authenticator are computed below.
+	if err := ApplyDialProxyProfile(packet, orig, route); err != nil {
+		return nil, fmt.Errorf("proxy: apply dial proxy profile: %w", err)
 	}
 
 	// Accounting-Request carries a keyed Request Authenticator

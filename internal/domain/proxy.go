@@ -41,7 +41,7 @@ type RadiusUpstream struct {
 	ID       int64  `json:"id,string" form:"id"`
 	NodeId   int64  `json:"node_id,string" form:"node_id"`
 	Name     string `json:"name" form:"name"`
-	Addr     string `json:"addr" form:"addr"`         // Upstream IP or hostname
+	Addr     string `json:"addr" form:"addr"`           // Upstream IP or hostname
 	AuthPort int    `json:"auth_port" form:"auth_port"` // Upstream auth port (default 1812)
 	AcctPort int    `json:"acct_port" form:"acct_port"` // Upstream acct port (default 1813)
 	CoaPort  int    `json:"coa_port" form:"coa_port"`   // Upstream dynamic-authorization port (default 3799)
@@ -51,9 +51,9 @@ type RadiusUpstream struct {
 	// response). See UpstreamRoleProxy / UpstreamRoleReplicate.
 	Role string `gorm:"index" json:"role" form:"role"`
 	// Weight is used by the "weight" realm strategy; zero is treated as 1.
-	Weight  int    `json:"weight" form:"weight"`
-	Status  string `gorm:"index" json:"status" form:"status"` // enabled | disabled
-	Remark  string `json:"remark" form:"remark"`
+	Weight    int       `json:"weight" form:"weight"`
+	Status    string    `gorm:"index" json:"status" form:"status"` // enabled | disabled
+	Remark    string    `json:"remark" form:"remark"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -67,11 +67,11 @@ func (RadiusUpstream) TableName() string {
 // set of upstream servers. The special realm "*" is the catch-all route used
 // for cluster load balancing of realm-less usernames.
 type RadiusRealmRoute struct {
-	ID    int64  `json:"id,string" form:"id"`
+	ID     int64 `json:"id,string" form:"id"`
 	NodeId int64 `json:"node_id,string" form:"node_id"`
 	// Realm is matched case-insensitively against the username suffix after
 	// the last "@". "*" matches usernames without a route-specific realm.
-	Realm    string `gorm:"index" json:"realm" form:"realm"`
+	Realm string `gorm:"index" json:"realm" form:"realm"`
 	// Strategy selects the upstream pool algorithm:
 	// single / round_robin / weight. See RealmStrategy* constants.
 	Strategy string `json:"strategy" form:"strategy"`
@@ -88,10 +88,19 @@ type RadiusRealmRoute struct {
 	// AcctMode controls accounting handling for proxied sessions:
 	// both (default) / forward / local. See AcctMode* constants.
 	AcctMode string `json:"acct_mode" form:"acct_mode"`
-	Status   string `gorm:"index" json:"status" form:"status"` // enabled | disabled
-	Remark   string `json:"remark" form:"remark"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	// Dial-proxy adapter fields. Empty DialVendor means an ordinary proxy
+	// route with no vendor-specific upstream request rewriting. DialVendor
+	// accepts ruijie/drcom/panabit/ctcc/cmcc/cucc/xujing. DialFilterID
+	// overrides the vendor default Filter-Id. DialVendorAttrsJSON is a JSON
+	// array of extra RADIUS attributes (raw wire values in hex) injected into
+	// the upstream request; it is validated before any packet is sent.
+	DialVendor          string    `json:"dial_vendor" form:"dial_vendor"`
+	DialFilterID        string    `json:"dial_filter_id" form:"dial_filter_id"`
+	DialVendorAttrsJSON string    `json:"dial_vendor_attrs_json" form:"dial_vendor_attrs_json"`
+	Status              string    `gorm:"index" json:"status" form:"status"` // enabled | disabled
+	Remark              string    `json:"remark" form:"remark"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // TableName specifies the realm route table name.

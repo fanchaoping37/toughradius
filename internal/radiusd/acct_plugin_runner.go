@@ -43,6 +43,10 @@ func (s *AcctService) HandleAccountingWithPlugins(
 		NASIP:      nasIP,
 		StatusType: int(statusType),
 	}
+	// Tests may build an AcctService without a full application context.
+	if s.appCtx != nil {
+		acctCtx.DB = s.appCtx.DB()
+	}
 
 	// Get registered accounting handlers
 	handlers := registry.GetAccountingHandlers()

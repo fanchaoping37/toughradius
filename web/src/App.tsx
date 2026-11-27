@@ -79,6 +79,9 @@ import {
   BillingOrderList, BillingOrderShow,
   CoATaskList, CoATaskShow, CoATaskIcon,
 } from './resources/proxy';
+import {
+  LedgerList, LedgerIconExport, RefundList, RefundIconExport,
+} from './resources/finance';
 
 const App = () => (
   <Admin
@@ -175,6 +178,8 @@ const App = () => (
     <Resource name="billing/accounts" list={BillingAccountList} show={BillingAccountShow} icon={BillingIconExport} />
     <Resource name="billing/orders" list={BillingOrderList} show={BillingOrderShow} />
     <Resource name="coa-tasks" list={CoATaskList} show={CoATaskShow} icon={CoATaskIcon} />
+    <Resource name="billing/ledger" list={LedgerList} icon={LedgerIconExport} />
+    <Resource name="billing/refunds" list={RefundList} icon={RefundIconExport} />
 
     {/* 自定义路由 */}
     <CustomRoutes>

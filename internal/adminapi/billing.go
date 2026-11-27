@@ -1,10 +1,13 @@
 package adminapi
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -13,8 +16,11 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/talkincode/toughradius/v9/internal/billing"
 	"github.com/talkincode/toughradius/v9/internal/domain"
+	"github.com/talkincode/toughradius/v9/internal/payment"
 	"github.com/talkincode/toughradius/v9/internal/webserver"
 	"github.com/talkincode/toughradius/v9/pkg/common"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // Billing management API. All amounts are integer fen, traffic is bytes and
@@ -283,19 +289,117 @@ func CreateBillingOrder(c echo.Context) error {
 	return ok(c, order)
 }
 
-// PaymentNotify accepts signed payment callbacks (HMAC-SHA256 over the raw
-// body using the web signing secret) and settles the order idempotently.
+// PaymentNotify accepts provider-signed payment callbacks and settles the
+// corresponding order idempotently. WeChat Pay v3, Alipay RSA2 and campus card
+// callbacks are verified by internal/payment before any ledger write.
+//
+// Legacy fallback (DEPRECATED): when payment.enabled is false and the request
+// carries X-Signature, a naked HMAC-SHA256 over the raw body using web.secret
+// is accepted for backward compatibility. New deployments must enable provider
+// verification; the fallback performs no amount or provider validation.
 func PaymentNotify(c echo.Context) error {
 	body, err := io.ReadAll(io.LimitReader(c.Request().Body, 1<<20))
 	if err != nil {
 		return fail(c, http.StatusBadRequest, "INVALID_REQUEST", "Unable to read callback", nil)
 	}
+	// Providers such as Alipay call ParseForm(); restore the body so form
+	// callbacks remain readable after the initial read.
+	c.Request().Body = io.NopCloser(bytes.NewReader(body))
+
+	payCfg := GetAppContext(c).Config().Payment
+	if !payCfg.Enabled {
+		if c.Request().Header.Get("X-Signature") != "" {
+			return legacyPaymentNotify(c, body)
+		}
+		return fail(c, http.StatusBadRequest, "PAYMENT_VERIFICATION_DISABLED",
+			"Payment signature verification is disabled", nil)
+	}
+
+	// Convert application configuration to a payment.Config here so the
+	// payment package stays independent of the config package.
+	registry := payment.NewRegistry(payment.Config{
+		WeChatAppID:     payCfg.WeChatAppID,
+		WeChatMchID:     payCfg.WeChatMchID,
+		WeChatAPIv3Key:  payCfg.WeChatAPIv3Key,
+		WeChatCertPEM:   payCfg.WeChatCertPEM,
+		WeChatLegacyKey: payCfg.WeChatLegacyKey,
+		AlipayAppID:     payCfg.AlipayAppID,
+		AlipayPublicKey: payCfg.AlipayPublicKey,
+		CardSecret:      payCfg.CardSecret,
+	})
+	channel, err := payment.ChannelFromRequest(c.Request(), body, payCfg.DefaultChannel)
+	if err != nil {
+		return fail(c, http.StatusBadRequest, "PAYMENT_CHANNEL_UNAVAILABLE",
+			"Unable to determine payment channel for callback", nil)
+	}
+	provider, err := registry.Get(channel)
+	if err != nil {
+		return fail(c, http.StatusBadRequest, "PAYMENT_CHANNEL_UNAVAILABLE",
+			"Payment channel is not configured", nil)
+	}
+	result, err := provider.Verify(c.Request(), body)
+	if err != nil {
+		// Never log or echo the raw callback, credentials or parser details.
+		return fail(c, http.StatusUnauthorized, "INVALID_SIGNATURE", "Payment callback signature mismatch", nil)
+	}
+	if !result.Paid {
+		return fail(c, http.StatusBadRequest, "PAYMENT_NOT_PAID", "Payment callback reports an unpaid transaction", nil)
+	}
+	if result.OrderNo == "" || result.TxnID == "" || result.AmountFen <= 0 {
+		return fail(c, http.StatusBadRequest, "INVALID_PAYMENT", "Payment callback is missing order, transaction or amount", nil)
+	}
+
+	// Shared cache is a fast-path duplicate filter only; the database payment
+	// unique key remains the authoritative idempotency source.
+	cacheKey := fmt.Sprintf("payment:notify:%s:%s", channel, result.TxnID)
+	if store := GetCacheStore(c); store != nil {
+		if cached, found, err := store.Get(c.Request().Context(), cacheKey); err == nil && found && cached == result.OrderNo {
+			var duplicate domain.BillingOrder
+			if err := GetDB(c).Where("order_no = ?", result.OrderNo).First(&duplicate).Error; err == nil {
+				return ok(c, &duplicate)
+			}
+		}
+	}
+
+	// Look up the order before settling: the signed amount must match the
+	// order amount or the account must not be credited.
+	var order domain.BillingOrder
+	if err := GetDB(c).Where("order_no = ?", result.OrderNo).First(&order).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fail(c, http.StatusBadRequest, "PAYMENT_ORDER_NOT_FOUND", "Order not found", nil)
+		}
+		return fail(c, http.StatusInternalServerError, "DATABASE_ERROR", "Failed to look up order", nil)
+	}
+	if result.AmountFen != order.AmountFen {
+		return fail(c, http.StatusBadRequest, "PAYMENT_AMOUNT_MISMATCH", "Payment amount does not match the order", nil)
+	}
+	if order.Status == "paid" {
+		// Already settled; do not touch the ledger again.
+		return ok(c, &order)
+	}
+	updated, err := billingEngine(c).MarkOrderPaid(c.Request().Context(), result.OrderNo,
+		result.TxnID, result.Channel, result.Raw, true)
+	if err != nil {
+		return fail(c, http.StatusBadRequest, "PAYMENT_FAILED", "Failed to settle payment", nil)
+	}
+	if store := GetCacheStore(c); store != nil {
+		if err := store.Set(c.Request().Context(), cacheKey, result.OrderNo, 24*time.Hour); err != nil {
+			zap.L().Warn("cache payment notification idempotency key failed",
+				zap.String("namespace", "payment"), zap.Error(err))
+		}
+	}
+	return ok(c, updated)
+}
+
+// legacyPaymentNotify implements the deprecated naked-HMAC callback format.
+// It is intentionally limited to payment.enabled=false + X-Signature.
+func legacyPaymentNotify(c echo.Context, body []byte) error {
 	signature := c.Request().Header.Get("X-Signature")
 	secret := GetAppContext(c).Config().Web.Secret
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write(body)
 	expected := hex.EncodeToString(mac.Sum(nil))
-	if signature == "" || !hmac.Equal([]byte(signature), []byte(expected)) {
+	if !hmac.Equal([]byte(signature), []byte(expected)) {
 		return fail(c, http.StatusUnauthorized, "INVALID_SIGNATURE", "Payment callback signature mismatch", nil)
 	}
 	var payload struct {
@@ -306,10 +410,13 @@ func PaymentNotify(c echo.Context) error {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return fail(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid callback payload", nil)
 	}
+	if payload.OrderNo == "" || payload.ChannelTxnID == "" {
+		return fail(c, http.StatusBadRequest, "INVALID_PAYMENT", "Payment callback is missing order or transaction id", nil)
+	}
 	order, err := billingEngine(c).MarkOrderPaid(c.Request().Context(), payload.OrderNo,
 		payload.ChannelTxnID, payload.Channel, string(body), true)
 	if err != nil {
-		return fail(c, http.StatusBadRequest, "PAYMENT_FAILED", "Failed to settle payment", err.Error())
+		return fail(c, http.StatusBadRequest, "PAYMENT_FAILED", "Failed to settle payment", nil)
 	}
 	return ok(c, order)
 }
@@ -328,4 +435,5 @@ func registerBillingRoutes() {
 	webserver.ApiGET("/billing/charges", ListBillingCharges)
 	webserver.ApiPOST("/billing/orders", CreateBillingOrder, requireAdmin())
 	webserver.ApiPOST("/billing/payments/notify", PaymentNotify)
+	registerFinanceRoutes()
 }

@@ -3,6 +3,7 @@ package adminapi
 import (
 	"github.com/labstack/echo/v4"
 	"github.com/talkincode/toughradius/v9/internal/app"
+	"github.com/talkincode/toughradius/v9/internal/cache"
 	"gorm.io/gorm"
 )
 
@@ -34,4 +35,15 @@ func GetDB(c echo.Context) *gorm.DB {
 // updating dynamic system settings.
 func GetConfig(c echo.Context) *app.ConfigManager {
 	return GetAppContext(c).ConfigMgr()
+}
+
+// GetCacheStore returns the shared TTL store when the application context
+// exposes one. Handlers treat nil as "no distributed cache configured" and
+// continue with the database as the authoritative idempotency source.
+func GetCacheStore(c echo.Context) cache.Store {
+	type provider interface{ CacheStore() cache.Store }
+	if p, ok := GetAppContext(c).(provider); ok {
+		return p.CacheStore()
+	}
+	return nil
 }

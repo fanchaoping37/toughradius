@@ -6,6 +6,7 @@ import (
 
 	"github.com/talkincode/toughradius/v9/internal/domain"
 	vendorparserspkg "github.com/talkincode/toughradius/v9/internal/radiusd/plugins/vendorparsers"
+	"gorm.io/gorm"
 	"layeh.com/radius"
 )
 
@@ -18,6 +19,10 @@ type AccountingContext struct {
 	NAS        *domain.NetNas
 	NASIP      string
 	StatusType int // rfc2866: Start=1, Stop=2, InterimUpdate=3, AccountingOn=7, AccountingOff=8
+	// DB is the authoritative database handle supplied by the AAA service.
+	// Handlers that need transactional reconciliation (for example
+	// Accounting-On / NAS reboot) use it; nil keeps unit tests isolated.
+	DB *gorm.DB
 }
 
 // AccountingHandler defines the accounting handler interface

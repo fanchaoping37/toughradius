@@ -2,9 +2,12 @@ package radiusd
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
+	"github.com/talkincode/toughradius/v9/internal/analytics"
 	"github.com/talkincode/toughradius/v9/internal/app"
+	"github.com/talkincode/toughradius/v9/internal/domain"
 	radiuserrors "github.com/talkincode/toughradius/v9/internal/radiusd/errors"
 	acctpkg "github.com/talkincode/toughradius/v9/internal/radiusd/plugins/accounting"
 	vendorparserspkg "github.com/talkincode/toughradius/v9/internal/radiusd/plugins/vendorparsers"
@@ -12,6 +15,7 @@ import (
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
 	"layeh.com/radius/rfc2866"
+	"layeh.com/radius/rfc2869"
 )
 
 // AcctService handles RADIUS Accounting-Request packets.
@@ -150,6 +154,48 @@ func (s *AcctService) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
 				zap.Int("status_type", int(statusType)),
 				zap.Error(err),
 			)
+			return
+		}
+		// The raw packet is reserved with consumed=false at ingress. Only a
+		// successfully handled packet may be marked consumed; anything left
+		// behind is a genuine dead letter for the reconciliation worker.
+		key := acctpkg.DedupKey(r, nasrip)
+		if err := s.appCtx.DB().WithContext(ctx).Model(&domain.RadiusAcctRecord{}).
+			Where("dedup_key = ?", key).Update("consumed", true).Error; err != nil {
+			zap.L().Warn("mark accounting raw record consumed failed",
+				zap.String("namespace", "radius"),
+				zap.String("username", username),
+				zap.String("dedup_key", key),
+				zap.Error(err),
+			)
+		}
+		if s.Archive != nil && s.Archive.Enabled() {
+			nasPort := rfc2869.NASPortID_GetString(r.Packet)
+			if nasPort == "" {
+				nasPort = strconv.Itoa(int(rfc2865.NASPort_Get(r.Packet)))
+			}
+			archived := analytics.Record{
+				EventTime:       acctpkg.EventTime(r.Packet),
+				Username:        username,
+				NASIP:           nasrip,
+				NASPort:         nasPort,
+				SessionID:       rfc2866.AcctSessionID_GetString(r.Packet),
+				StatusType:      uint8(statusType),
+				SessionTime:     uint32(rfc2866.AcctSessionTime_Get(r.Packet)),
+				InputOctets:     uint64(acctpkg.GigawordOctets(uint32(rfc2866.AcctInputOctets_Get(r.Packet)), uint32(rfc2869.AcctInputGigawords_Get(r.Packet)))),
+				OutputOctets:    uint64(acctpkg.GigawordOctets(uint32(rfc2866.AcctOutputOctets_Get(r.Packet)), uint32(rfc2869.AcctOutputGigawords_Get(r.Packet)))),
+				InputGigawords:  uint32(rfc2869.AcctInputGigawords_Get(r.Packet)),
+				OutputGigawords: uint32(rfc2869.AcctOutputGigawords_Get(r.Packet)),
+				DedupKey:        key,
+				FramedIP:        rfc2865.FramedIPAddress_Get(r.Packet).String(),
+			}
+			if err := s.Archive.Write(ctx, archived); err != nil {
+				zap.L().Warn("archive accounting record failed",
+					zap.String("namespace", "analytics"),
+					zap.String("dedup_key", key),
+					zap.Error(err),
+				)
+			}
 		}
 	}
 

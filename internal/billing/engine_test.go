@@ -32,7 +32,7 @@ func testEngine(t *testing.T) (*Engine, *gorm.DB) {
 		&domain.BillingAccount{}, &domain.BillingAssetFlow{}, &domain.BillingPlan{},
 		&domain.BillingSubscription{}, &domain.BillingSessionUsage{}, &domain.BillingCharge{},
 		&domain.BillingOrder{}, &domain.BillingPayment{}, &domain.BillingCard{},
-		&domain.BillingCardBatch{},
+		&domain.BillingCardBatch{}, &domain.BillingLedgerEntry{}, &domain.BillingRefund{},
 	))
 	return NewEngine(db), db
 }

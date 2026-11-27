@@ -11,6 +11,7 @@ import (
 	"github.com/talkincode/toughradius/v9/internal/domain"
 	"github.com/talkincode/toughradius/v9/pkg/common"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // CreateOrder creates a recharge/subscription order. Replaying the same
@@ -44,6 +45,12 @@ func (e *Engine) CreateOrder(ctx context.Context, accountID, planID, amountFen i
 // duplicate settlement — B7 acceptance requires 100 duplicate callbacks to
 // produce exactly one credit.
 func (e *Engine) MarkOrderPaid(ctx context.Context, orderNo, channelTxnID, channel, rawNotify string, signVerified bool) (*domain.BillingOrder, error) {
+	if !signVerified {
+		return nil, fmt.Errorf("billing: payment callback signature not verified")
+	}
+	if orderNo == "" || channelTxnID == "" {
+		return nil, fmt.Errorf("billing: payment callback requires order and transaction id")
+	}
 	var order domain.BillingOrder
 	if err := e.db.WithContext(ctx).Where("order_no = ?", orderNo).First(&order).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -59,29 +66,65 @@ func (e *Engine) MarkOrderPaid(ctx context.Context, orderNo, channelTxnID, chann
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	if !signVerified {
-		return nil, fmt.Errorf("billing: payment callback signature not verified")
+	if channel == "" {
+		channel = order.Channel
 	}
+	if channel == "" {
+		return nil, fmt.Errorf("billing: payment callback requires channel")
+	}
+
 	payment := &domain.BillingPayment{
 		PaymentNo: fmt.Sprintf("PAY%d", common.UUIDint64()), OrderNo: orderNo,
 		Channel: channel, ChannelTxnID: channelTxnID, AmountFen: order.AmountFen,
 		RawNotify: rawNotify, SignVerified: true, Status: "paid",
 		NotifiedAt: time.Now().UTC(), CreatedAt: time.Now().UTC(),
 	}
-	if err := e.db.WithContext(ctx).Create(payment).Error; err != nil {
+	err = e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current domain.BillingOrder
+		if err := tx.Where("order_no = ?", orderNo).First(&current).Error; err != nil {
+			return err
+		}
+		if current.Status == "paid" || current.Status == "refunded" {
+			order = current
+			return nil
+		}
+		if current.Status != "pending" {
+			return fmt.Errorf("billing: order %s is %s, cannot settle", orderNo, current.Status)
+		}
+		res := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "channel_txn_id"}},
+			DoNothing: true,
+		}).Create(payment)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			// A concurrent callback with the same transaction id won the race.
+			order = current
+			return nil
+		}
+		if err := moveAsset(tx, current.AccountID, "CASH", "IN", current.AmountFen,
+			"recharge", orderNo, "payment:"+payment.PaymentNo, channel); err != nil {
+			return err
+		}
+		// The ledger entry is committed together with the asset movement so a
+		// balance can never exist without its double-entry counterpart.
+		if err := postRechargeTx(tx, orderNo, payment.PaymentNo, channel,
+			current.AccountID, current.AmountFen); err != nil {
+			return err
+		}
+		if err := tx.Model(&domain.BillingOrder{}).
+			Where("order_no = ? AND status = ?", orderNo, "pending").
+			Updates(map[string]interface{}{"status": "paid", "paid_at": time.Now().UTC()}).Error; err != nil {
+			return err
+		}
+		order = current
+		order.Status = "paid"
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	if err := e.Credit(ctx, order.AccountID, "CASH", order.AmountFen, "recharge",
-		orderNo, "payment:"+payment.PaymentNo, channel); err != nil {
-		return nil, err
-	}
-	res := e.db.WithContext(ctx).Model(&domain.BillingOrder{}).
-		Where("order_no = ? AND status = ?", orderNo, "pending").
-		Updates(map[string]interface{}{"status": "paid", "paid_at": time.Now().UTC()})
-	if res.Error != nil {
-		return nil, res.Error
-	}
-	order.Status = "paid"
 	return &order, nil
 }
 

@@ -62,6 +62,10 @@ func (s *AuthService) stageProxyDispatch(ctx *AuthPipelineContext) error {
 // reply attributes are copied (minus the upstream Message-Authenticator) and
 // the response is re-signed with the NAS shared secret.
 func (s *AuthService) sendProxiedAccept(ctx *AuthPipelineContext, upstream *radius.Packet) {
+	// A successful upstream authentication invalidates any recently cached
+	// rejection reason for this username.
+	dialRejectReasons.Delete(ctx.Username)
+
 	resp := ctx.Request.Response(radius.CodeAccessAccept)
 	for _, attr := range upstream.Attributes {
 		if attr.Type == rfc2869.MessageAuthenticator_Type {
@@ -81,15 +85,28 @@ func (s *AuthService) sendProxiedAccept(ctx *AuthPipelineContext, upstream *radi
 	)
 }
 
-// sendProxiedReject relays an upstream Access-Reject to the NAS, preserving
-// the upstream Reply-Message when present.
+// sendProxiedReject relays an upstream Access-Reject to the NAS. The upstream
+// Reply-Message is preserved and cached per username for a short time; when a
+// later reject has no Reply-Message of its own, the most recent reason is
+// echoed back so the NAS can still explain the failure. The cache only fills
+// in the Reply-Message attribute: the response code is always Access-Reject
+// here and is never derived from cached state.
 func (s *AuthService) sendProxiedReject(ctx *AuthPipelineContext, upstream *radius.Packet) {
 	resp := ctx.Request.Response(radius.CodeAccessReject)
+
+	reason := ""
 	if upstream != nil {
-		if msg := rfc2865.ReplyMessage_GetString(upstream); msg != "" {
-			_ = rfc2865.ReplyMessage_SetString(resp, msg) //nolint:errcheck
-		}
+		reason = rfc2865.ReplyMessage_GetString(upstream)
 	}
+	if reason != "" {
+		dialRejectReasons.Set(ctx.Username, reason)
+	} else if cached, ok := dialRejectReasons.Get(ctx.Username); ok {
+		reason = cached
+	}
+	if reason != "" {
+		_ = rfc2865.ReplyMessage_SetString(resp, reason) //nolint:errcheck
+	}
+
 	s.addResponseMessageAuthenticator(resp, ctx.NAS.Secret)
 	if err := ctx.Writer.Write(resp); err != nil {
 		zap.L().Error("radius proxy write reject error",

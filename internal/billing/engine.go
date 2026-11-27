@@ -336,14 +336,21 @@ func (e *Engine) ChargeSession(ctx context.Context, req ChargeRequest) (*ChargeR
 			"updated_at":      time.Now().UTC(),
 		}
 		if foundErr != nil {
-			return tx.Create(&domain.BillingSessionUsage{
+			if err := tx.Create(&domain.BillingSessionUsage{
 				SessionID: req.SessionID, AccountID: req.AccountID,
 				Seconds: req.Seconds, Bytes: req.Bytes,
 				ChargedFen:    current.ChargedFen + cashFen,
 				LastEventTime: req.EventTime, UpdatedAt: time.Now().UTC(),
-			}).Error
+			}).Error; err != nil {
+				return err
+			}
+		} else if err := tx.Model(&domain.BillingSessionUsage{}).Where("session_id = ?", req.SessionID).Updates(updates).Error; err != nil {
+			return err
 		}
-		return tx.Model(&domain.BillingSessionUsage{}).Where("session_id = ?", req.SessionID).Updates(updates).Error
+		// Revenue recognition is persisted with the usage watermark in the same
+		// transaction. The cumulative counters make this replay-safe.
+		usageKey := fmt.Sprintf("%s:s%d:b%d", req.SessionID, req.Seconds, req.Bytes)
+		return postUsageChargeTx(tx, req.AccountID, req.SessionID, usageKey, cashFen)
 	}); err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cast"
 	"github.com/talkincode/toughradius/v9/config"
+	"github.com/talkincode/toughradius/v9/internal/analytics"
+	"github.com/talkincode/toughradius/v9/internal/cache"
 	"github.com/talkincode/toughradius/v9/internal/domain"
 	"github.com/talkincode/toughradius/v9/pkg/metrics"
 	"go.uber.org/zap"
@@ -30,6 +33,8 @@ type Application struct {
 	sched         *cron.Cron
 	configManager *ConfigManager
 	profileCache  *ProfileCache
+	cacheStore    cache.Store
+	archive       *analytics.Archive
 }
 
 // Ensure Application implements all interfaces
@@ -53,6 +58,14 @@ func (a *Application) Config() *config.AppConfig {
 func (a *Application) DB() *gorm.DB {
 	return a.gormDB
 }
+
+// CacheStore returns the application-wide TTL store. It is an in-memory
+// store unless Redis is explicitly enabled; enabled-but-unreachable Redis
+// aborts startup instead of silently losing distributed idempotency state.
+func (a *Application) CacheStore() cache.Store { return a.cacheStore }
+
+// Archive returns the optional ClickHouse accounting archive.
+func (a *Application) Archive() *analytics.Archive { return a.archive }
 
 // OverrideDB replaces the application's database handle (used in tests).
 func (a *Application) OverrideDB(db *gorm.DB) {
@@ -128,6 +141,33 @@ func (a *Application) Init(cfg *config.AppConfig) {
 	}
 	a.gormDB = getDatabase(cfg.Database, cfg.System.Workdir)
 	zap.S().Infof("Database connection successful, type: %s", cfg.Database.Type)
+
+	// Optional shared cache: fail closed when an operator explicitly enables
+	// Redis but the endpoint is unreachable. Silent fallback to per-process
+	// memory would break idempotency across multiple instances.
+	store, err := cache.New(cache.Config{
+		Enabled:  cfg.Cache.Enabled,
+		Addr:     cfg.Cache.Addr,
+		Password: cfg.Cache.Password,
+		DB:       cfg.Cache.DB,
+		TTL:      time.Duration(cfg.Cache.TTLSeconds) * time.Second,
+	})
+	if err != nil {
+		zap.L().Fatal("shared cache initialization failed", zap.Error(err))
+	}
+	a.cacheStore = store
+
+	// Optional ClickHouse archive for high-volume accounting analytics.
+	archive, err := analytics.NewArchive(context.Background(), analytics.Config{
+		Enabled:     cfg.Analytics.Enabled,
+		DSN:         cfg.Analytics.DSN,
+		BatchSize:   cfg.Analytics.BatchSize,
+		FlushPeriod: time.Duration(cfg.Analytics.FlushSeconds) * time.Second,
+	})
+	if err != nil {
+		zap.L().Fatal("analytics archive initialization failed", zap.Error(err))
+	}
+	a.archive = archive
 
 	// Ensure database schema is migrated before loading configs
 	if err := a.MigrateDB(false); err != nil {
@@ -364,6 +404,16 @@ func (a *Application) Release() {
 
 	if a.profileCache != nil {
 		a.profileCache.Stop()
+	}
+	if a.archive != nil {
+		if err := a.archive.Close(); err != nil {
+			zap.L().Warn("close analytics archive failed", zap.Error(err))
+		}
+	}
+	if a.cacheStore != nil {
+		if err := a.cacheStore.Close(); err != nil {
+			zap.L().Warn("close shared cache failed", zap.Error(err))
+		}
 	}
 
 	_ = metrics.Close()

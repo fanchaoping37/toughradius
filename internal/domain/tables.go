@@ -35,4 +35,6 @@ var Tables = []interface{}{
 	&BillingPayment{},
 	&BillingCardBatch{},
 	&BillingCard{},
+	&BillingLedgerEntry{},
+	&BillingRefund{},
 }

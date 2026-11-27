@@ -13,6 +13,7 @@ import (
 
 	"github.com/panjf2000/ants/v2"
 	"github.com/talkincode/toughradius/v9/config"
+	"github.com/talkincode/toughradius/v9/internal/analytics"
 	"github.com/talkincode/toughradius/v9/internal/app"
 	"github.com/talkincode/toughradius/v9/internal/domain"
 	cachepkg "github.com/talkincode/toughradius/v9/internal/radiusd/cache"
@@ -34,9 +35,9 @@ import (
 
 	// Import vendor parsers for auto-registration
 	"github.com/talkincode/toughradius/v9/internal/radiusd/plugins/auth"
-	"github.com/talkincode/toughradius/v9/internal/radiusd/proxy"
 	vendorparsers "github.com/talkincode/toughradius/v9/internal/radiusd/plugins/vendorparsers"
 	_ "github.com/talkincode/toughradius/v9/internal/radiusd/plugins/vendorparsers/parsers"
+	"github.com/talkincode/toughradius/v9/internal/radiusd/proxy"
 )
 
 const (
@@ -70,6 +71,10 @@ type RadiusService struct {
 
 	// Proxy implements upstream forwarding, realm routing and replication.
 	Proxy *proxy.Service
+
+	// Archive is the optional ClickHouse accounting archive. Nil when the
+	// analytics section is disabled; writes are a no-op in that case.
+	Archive *analytics.Archive
 
 	// New Repository Layer (v9 refactoring)
 	UserRepo       repository.UserRepository
@@ -108,6 +113,9 @@ func NewRadiusService(appCtx app.AppContext) *RadiusService {
 	s.Proxy = proxy.NewService(appCtx,
 		time.Duration(appCtx.Config().Radiusd.ProxyTimeout)*time.Second,
 		appCtx.Config().Radiusd.ProxyRetry)
+	if provider, ok := appCtx.(interface{ Archive() *analytics.Archive }); ok {
+		s.Archive = provider.Archive()
+	}
 
 	// Note: Plugin initialization is done externally after service creation
 	// to avoid circular dependency. Call plugins.InitPlugins() from main.go.

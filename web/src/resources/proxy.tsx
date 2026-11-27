@@ -183,6 +183,9 @@ const routeFields: FieldSpec[] = [
   { source: 'user_suffix', label: '用户名后缀' },
   { source: 'mapped_password', label: '映射密码' },
   { source: 'acct_mode', label: '计费模式', kind: 'select', choices: [{ id: 'both', name: '双写' }, { id: 'forward', name: '转发' }, { id: 'local', name: '本地' }] },
+  { source: 'dial_vendor', label: '代拨厂商' },
+  { source: 'dial_filter_id', label: 'Filter-Id' },
+  { source: 'dial_vendor_attrs_json', label: '厂商属性JSON' },
   { source: 'status', label: '状态', kind: 'select', choices: statusChoices },
 ];
 const routeForm: FieldSpec[] = [
@@ -193,6 +196,9 @@ const routeForm: FieldSpec[] = [
   { source: 'user_suffix', label: '用户名后缀', kind: 'text' },
   { source: 'mapped_password', label: '映射密码', kind: 'text' },
   { source: 'acct_mode', label: '计费模式', kind: 'select', choices: [{ id: 'both', name: '双写' }, { id: 'forward', name: '转发' }, { id: 'local', name: '本地' }] },
+  { source: 'dial_vendor', label: '代拨厂商（ruijie/drcom/panabit/ctcc/cmcc/cucc/xujing）', kind: 'text' },
+  { source: 'dial_filter_id', label: 'Filter-Id（留空用厂商默认）', kind: 'text' },
+  { source: 'dial_vendor_attrs_json', label: '厂商属性JSON（[{"type":26,"value_hex":"..."}]）', kind: 'text' },
   { source: 'status', label: '状态', kind: 'select', choices: statusChoices },
 ];
 const realmRoute = makeResource({

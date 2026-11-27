@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/talkincode/toughradius/v9/internal/domain"
+	"github.com/talkincode/toughradius/v9/internal/radiusd/proxy"
 	"github.com/talkincode/toughradius/v9/internal/webserver"
 )
 
@@ -52,6 +53,9 @@ type realmRouteUpdatePayload struct {
 	UserSuffix     string `json:"user_suffix" validate:"omitempty,max=100"`
 	MappedPassword string `json:"mapped_password" validate:"omitempty,max=100"`
 	AcctMode       string `json:"acct_mode" validate:"omitempty,oneof=both forward local"`
+	DialVendor     string `json:"dial_vendor" validate:"omitempty,max=30"`
+	DialFilterID   string `json:"dial_filter_id" validate:"omitempty,max=128"`
+	DialAttrsJSON  string `json:"dial_vendor_attrs_json" validate:"omitempty,max=4000"`
 	Status         string `json:"status" validate:"omitempty,oneof=enabled disabled"`
 	Remark         string `json:"remark" validate:"omitempty,max=500"`
 }
@@ -66,6 +70,9 @@ type realmRoutePayload struct {
 	UserSuffix     string `json:"user_suffix" validate:"omitempty,max=100"`
 	MappedPassword string `json:"mapped_password" validate:"omitempty,max=100"`
 	AcctMode       string `json:"acct_mode" validate:"omitempty,oneof=both forward local"`
+	DialVendor     string `json:"dial_vendor" validate:"omitempty,max=30"`
+	DialFilterID   string `json:"dial_filter_id" validate:"omitempty,max=128"`
+	DialAttrsJSON  string `json:"dial_vendor_attrs_json" validate:"omitempty,max=4000"`
 	Status         string `json:"status" validate:"omitempty,oneof=enabled disabled"`
 	Remark         string `json:"remark" validate:"omitempty,max=500"`
 }
@@ -321,6 +328,9 @@ func CreateRealmRoute(c echo.Context) error {
 	if err := c.Validate(&payload); err != nil {
 		return handleValidationError(c, err)
 	}
+	if err := validateDialRouteFields(payload.DialVendor, payload.DialAttrsJSON); err != nil {
+		return fail(c, http.StatusUnprocessableEntity, "INVALID_DIAL_CONFIG", "Invalid dial-proxy configuration", err.Error())
+	}
 
 	// Reject unknown upstream ids so a typo does not silently break routing.
 	ids := parseUpstreamIDCSV(payload.UpstreamIds)
@@ -333,16 +343,19 @@ func CreateRealmRoute(c echo.Context) error {
 	}
 
 	item := domain.RadiusRealmRoute{
-		NodeId:         payload.NodeId,
-		Realm:          payload.Realm,
-		Strategy:       domain.RealmStrategySingle,
-		UpstreamIds:    payload.UpstreamIds,
-		UserPrefix:     payload.UserPrefix,
-		UserSuffix:     payload.UserSuffix,
-		MappedPassword: payload.MappedPassword,
-		AcctMode:       domain.AcctModeBoth,
-		Status:         "enabled",
-		Remark:         payload.Remark,
+		NodeId:              payload.NodeId,
+		Realm:               payload.Realm,
+		Strategy:            domain.RealmStrategySingle,
+		UpstreamIds:         payload.UpstreamIds,
+		UserPrefix:          payload.UserPrefix,
+		UserSuffix:          payload.UserSuffix,
+		MappedPassword:      payload.MappedPassword,
+		AcctMode:            domain.AcctModeBoth,
+		DialVendor:          payload.DialVendor,
+		DialFilterID:        payload.DialFilterID,
+		DialVendorAttrsJSON: payload.DialAttrsJSON,
+		Status:              "enabled",
+		Remark:              payload.Remark,
 	}
 	if payload.Strategy != "" {
 		item.Strategy = payload.Strategy
@@ -385,6 +398,9 @@ func UpdateRealmRoute(c echo.Context) error {
 	if err := c.Validate(&payload); err != nil {
 		return handleValidationError(c, err)
 	}
+	if err := validateDialRouteFields(payload.DialVendor, payload.DialAttrsJSON); err != nil {
+		return fail(c, http.StatusUnprocessableEntity, "INVALID_DIAL_CONFIG", "Invalid dial-proxy configuration", err.Error())
+	}
 
 	if payload.Realm != "" {
 		item.Realm = payload.Realm
@@ -412,6 +428,15 @@ func UpdateRealmRoute(c echo.Context) error {
 	}
 	if payload.AcctMode != "" {
 		item.AcctMode = payload.AcctMode
+	}
+	if payload.DialVendor != "" {
+		item.DialVendor = payload.DialVendor
+	}
+	if payload.DialFilterID != "" {
+		item.DialFilterID = payload.DialFilterID
+	}
+	if payload.DialAttrsJSON != "" {
+		item.DialVendorAttrsJSON = payload.DialAttrsJSON
 	}
 	if payload.Status != "" {
 		item.Status = payload.Status
@@ -467,6 +492,17 @@ func intOrDefault(v *int, def int) int {
 		return def
 	}
 	return *v
+}
+
+// validateDialRouteFields rejects invalid dial-proxy configuration before it
+// reaches the runtime packet path. The runtime also validates, but operator
+// feedback at configuration time prevents silent fail-closed authentication.
+func validateDialRouteFields(vendor, attrsJSON string) error {
+	if err := proxy.ValidateDialVendor(vendor); err != nil {
+		return err
+	}
+	_, err := proxy.ParseDialVendorAttrs(attrsJSON)
+	return err
 }
 
 // parseUpstreamIDCSV parses a comma-separated upstream id list, tolerating
