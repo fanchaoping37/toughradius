@@ -2,7 +2,7 @@
 
 > 本文面向"第一次接触本项目"的读者：用图和文字讲清**项目是什么、代码怎么分层、一次认证/计费/下线请求
 > 在代码里怎么流转**。状态与验收口径以 [`ARCHITECTURE-BASELINE.md`](./ARCHITECTURE-BASELINE.md) 为准。
-> 基于 `dev-freeradius-compare` 分支 `3e61b9d`（2026-11-27）。
+> 基于 `dev-freeradius-compare` 分支 `ab2175b`（2026-11-27）。
 
 ---
 
@@ -260,8 +260,37 @@ sequenceDiagram
   把校园账号转换为运营商账号转发上游（`radius_realm_route` 配置）。
 - **计费**：Start/Interim/Stop 落话单，`acct_mode` 决定本地/转发/两者。
 - **控制**：管理端或策略到期通过 `CoAService` 向网关下发 CoA/DM（3799），任务先落库后发送。
-- 对接属性清单、厂商差异（锐捷/Drcom/Panabit/电信/移动/联通/XuJing）与未实现适配项见
+- 对接属性清单、厂商差异（锐捷/Drcom/Panabit/电信/移动/联通/XuJing）见
   `docs/dial-gateway-integration.md`。
+- 已补齐三类适配：① 上游请求侧 Filter-Id/VSA 注入与 DRCOM 属性裁剪（配置驱动，不硬编码运营商 IP）；
+  ② 上游拒绝原因按用户名缓存 5 分钟，只回显文案；③ PANABIT Stop 自动向上游 CoA 端口发 Disconnect。
+
+### 4.8 支付、财务账本与运营对账
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant P as 支付渠道
+    participant API as adminapi
+    participant B as billing 引擎
+    participant DB as 数据库
+    participant CK as ClickHouse(可选)
+
+    U->>API: 创建订单（Idempotency-Key）
+    P->>API: 渠道回调（微信 v3 / 支付宝 RSA2 / 一卡通 HMAC）
+    API->>API: 按渠道验签 → 校验订单金额 → 支付幂等快路径(Redis 可选)
+    API->>B: MarkOrderPaid
+    B->>DB: 同事务写支付单 + 资产入账 + 借贷平衡分录 + 订单状态
+    Note over B,DB: 消费时按会话增量扣费并写 REVENUE_SERVICE 分录
+    U->>API: 申请退款（Idempotency-Key）
+    B->>DB: 校验可退金额 → CAS 扣回现金 → 反向分录 → 退款单/订单状态
+    Note over B: 周期 Worker 每 5 分钟对账 Stop-Missing 与死信
+    DB-->>CK: 会计报文成功后异步批量归档
+```
+
+运营对账入口：`POST /api/v1/billing/reconciliation`、`/reconciliation/nas-reboot`、
+`/reconciliation/dead-letters`；账本查询：`GET /api/v1/billing/ledger`；退款：`POST /api/v1/billing/refunds`。
+退款与账本均为幂等操作，重复回调不会二次入账或二次扣回。
 
 ---
 
@@ -279,13 +308,17 @@ erDiagram
     RADIUS_USER ||--|| BILLING_ACCOUNT : "计费账户"
     BILLING_ACCOUNT ||--o{ BILLING_ASSET_FLOW : "幂等流水"
     BILLING_ORDER ||--o{ BILLING_PAYMENT : "支付回调"
+    BILLING_ORDER ||--o{ BILLING_REFUND : "退款单"
+    BILLING_ACCOUNT ||--o{ BILLING_LEDGER_ENTRY : "双分录"
+    BILLING_REFUND ||--o{ BILLING_LEDGER_ENTRY : "反向分录"
     RADIUS_ONLINE ||--o{ RADIUS_COA_TASK : "强制下线任务"
 ```
 
 - **认证侧**：`radius_user`（凭据/属性）→ `radius_online`（在线会话）→ `radius_accounting`（话单）。
 - **运营侧**：`radius_upstream` + `radius_realm_route`（代理/漫游）；`portal_nas`（Portal 设备）。
-- **计费侧**：`billing_*` 十张表，覆盖账户、资产流水、套餐、订阅、用量、扣费、订单、支付、充值卡。
-- 完整 27 张表见基线文档第 14 节。
+- **计费侧**：`billing_*` 十二张表，覆盖账户、资产流水、套餐、订阅、用量、扣费、订单、支付、充值卡、
+  双分录账本与退款单。
+- 完整 29 张表见基线文档第 14 节。
 
 ---
 
@@ -302,6 +335,9 @@ erDiagram
 | 开启 Portal | `portal.enabled=true` + `TOUGHRADIUS_PORTAL_*` |
 | 开启 DHCP/DNS/引流 | `dhcp.enabled` / `dns_redirect.enabled` / `ipv6.enabled` / `captive.enabled` |
 | 开启开放 API | `openapi.enabled=true` + `TOUGHRADIUS_OPENAPI_CREDENTIALS=key:secret,...` |
+| 开启支付渠道验签 | `payment.enabled=true` + `TOUGHRADIUS_PAYMENT_*`（生产必设，否则仅兼容裸 HMAC） |
+| 开启 Redis 共享状态 | `cache.enabled=true` + `TOUGHRADIUS_CACHE_ADDR`（不可达时启动失败关闭） |
+| 开启 ClickHouse 归档 | `analytics.enabled=true` + `TOUGHRADIUS_ANALYTICS_DSN` |
 
 配置加载顺序：`-c` 指定 → 工作目录 → `/etc` → 默认值 → 环境变量覆盖。详见 `config/config.go`。
 
@@ -328,8 +364,10 @@ go run ./cmd/benchmark ...      # 压力测试
 ./toughradius -c toughradius.yml
 ```
 
-**验证现状**（以基线第 19 节为准）：`go build ./...` 与 Linux 交叉编译通过；`go test -short ./internal/...`
-56 包 ok、config 包因 Windows 路径分隔符失败（既有问题）。真实设备互通、压力测试、数据库迁移执行均**未验收**。
+**验证现状**（以基线第 19 节为准）：`go build ./...`、Linux 交叉编译与
+`go test ./... -count=1` 全量通过（此前 Windows 路径/SQLite 路径问题已修复）。
+前端依赖未安装，未执行 `npm run type-check`；真实设备互通、支付商户联调、压力测试与
+生产数据库迁移演练仍**未验收**。
 
 ---
 
@@ -338,8 +376,8 @@ go run ./cmd/benchmark ...      # 压力测试
 1. **启动**：`main.go` →看 errgroup 拉起哪些服务 → `internal/app` 装配。
 2. **认证主线**：`radius_auth.go` → `auth_stages.go`（9 阶段）→ 各 stage 函数 → `plugins/init.go`（注册清单）。
 3. **计费主线**：`radius_acct.go` → `acct_plugin_runner.go` → `plugins/accounting/handlers/*`。
-4. **二开能力**：代理看 `radiusd/proxy`；Portal 看 `internal/portal`；计费看 `internal/billing`；
-   接入网看 `internal/accessnet`。
+4. **二开能力**：代理看 `radiusd/proxy`；Portal 看 `internal/portal`；计费/对账/账本看 `internal/billing`；
+   支付看 `internal/payment`；缓存与归档看 `internal/cache`、`internal/analytics`；接入网看 `internal/accessnet`。
 5. **协议细节**：查 `docs/rfcs/` 对应 RFC 原文 + `docs/rfcs/README.md`。
 6. **状态与边界**：随时对照 `ARCHITECTURE-BASELINE.md`，避免重复建设或夸大完成度。
 

@@ -82,9 +82,9 @@ VSA 解析（含锐捷 4881、华为 2011、H3C 25506、中兴 3902）、用户�
 |---|---|---|
 | `radiusUser.getDname()/getDword()` 替换用户名密码 | `UserPrefix + local-part + UserSuffix` 重写用户名，`MappedPassword` 替换 PAP 密码 | `radius_realm_route` 表 |
 | 按 `serverType` 选 `DialConfig`（vendorId/ip/secret/port） | realm 匹配选 `radius_upstream` 池，`strategy=single/round_robin/weight` | `radius_realm_route.upstream_ids` + `radius_upstream` |
-| 锐捷 VSA `4881/156 = "CMCC"` | 现有一期响应增强器 14 厂商 VSA；**上游请求侧注入 VSA 尚未实现**（见第 6 节） | `internal/radiusd/plugins/vendorparsers/` |
+| 锐捷 VSA `4881/156 = "CMCC"` | 上游请求侧可按 `dial_vendor_attrs_json` 注入原始 VSA 字节；具体值由路由配置提供，不硬编码 | `radius_realm_route` + `internal/radiusd/proxy/dial.go` |
 | 上游 Accept/Reject 合成回网关 | `ForwardAuth` 取上游响应并重签 NAS 密钥与 MA 后回包 | `internal/radiusd/proxy/client.go` |
-| 上游失败返回合成 Reject + `Reply-Message="upstream failure"` | 已实现 fail-closed 拒绝；**具体文案缓存 5 分钟机制未实现**（见第 6 节） | `auth_proxy_stage.go` |
+| 上游失败返回合成 Reject + `Reply-Message="upstream failure"` | fail-closed 拒绝；上游 Reply-Message 按用户名缓存 5 分钟，仅回显文案不改变认证结果 | `auth_proxy_stage.go` + `internal/radiusd/dial_reject_cache.go` |
 
 ### 3.3 厂商差异（DialProxy 事实，供适配参考）
 
@@ -127,7 +127,7 @@ RFC 5080 去重、脱敏原始属性落 `radius_acct_record` 已实现。
 |---|---|---|
 | 管理端/策略到期踢代拨网关上的用户 | 本项目 → 代拨网关 3799 | `CoAService.Disconnect/CoA`，`radius_coa_task` 先落库后发送，固定 Identifier 重投 |
 | 代拨网关或运营商发来 CoA/DM | 外部 → 本项目 3799 | `dynauth_server.go` 校验来源 Secret + MA，中继到 NAS，回 ACK/NAK |
-| PANABIT Stop 触发下线（Java 特例） | AAA → 上游 3799 | 本项目可用 `acct_mode=forward` + CoA 任务实现；**专用联动尚未实现**（见第 6 节） |
+| PANABIT Stop 触发下线（Java 特例） | AAA → 上游 3799 | `dial_vendor=panabit` 且 Stop 时复用选中上游，向其 CoA 端口发 Disconnect；失败仅记录日志/指标 |
 
 冻结语义（继承基线第 9 节）：上游 Secret 不得用于 NAS 出站动态授权；上游 Disconnect 要真正下线，
 必须用该会话 NAS 自己的 Secret。
@@ -140,18 +140,22 @@ RFC 5080 去重、脱敏原始属性落 `radius_acct_record` 已实现。
 - 代拨网关作为 NAS 的注册/密钥绑定、认证/计费受理、本地用户与套餐策略。
 - 校园账号→运营商账号的 PAP 凭据转换与 realm 路由转发（`proxy_dispatch`）。
 - 计费转发/抄送、RFC 合规话单、CoA/DM 双向中继与任务持久化。
+- **上游请求侧属性注入**：`dial_vendor` 选择厂商 profile，`dial_filter_id` 显式覆盖，
+  PANABIT/XuJing 有默认 Filter-Id，DRCOM 移除 type 3/60；`dial_vendor_attrs_json` 用
+  `[{"type":26,"value_hex":"..."}]` 注入原始 VSA。配置在管理 API 与运行时双重校验，非法值 fail-closed。
+- **上游拒绝原因缓存**：按用户名在进程内缓存 5 分钟 Reply-Message；Accept 时清除；
+  只影响 NAS 收到的文案，不改变 Access-Accept/Reject。多实例不共享。
+- **PANABIT Stop 联动**：`dial_vendor=panabit` 的 Stop 计费在转发同时向上游 CoA 端口下发 Disconnect，
+  使用上游 Secret；这不等于对本地 NAS 下发，遵守“上游 Secret 不用于 NAS 出站动态授权”的冻结语义。
 
 **待补适配（明确未实现，不得声称完成）**
-1. **上游请求侧 VSA 注入**：转发给运营商时补 `Filter-Id=__DIALPROXY__/__PAIPPXY__`
-   与锐捷 `VSA 4881/156=CMCC`（现有 VSA 能力主要在响应侧）。
-2. **上游拒绝原因缓存**：DialProxy 把失败文案以 `PPPOE_AUTH_MESSAGE:<username>` 缓存 5 分钟，
-   本项目未实现该短时错误回显。
-3. **PANABIT 专用联动**：计费 Stop 自动触发 Disconnect 到 3799 的绑定配置。
-4. **运营商固定 NAS-IP/端口模板**：CTCC/CMCC/CUCC 的 `1645/1646` + 固定 NAS-IP 模板化
-   （当前由 `radius_upstream.auth_port/acct_port` 手动配置，可用但无模板）。
-5. **DNS 服务器抄送**：计费抄送到 DNS 服务器带 `Class` 运营商标识，本项目抄送机制可复用，
+1. **运营商固定 NAS-IP/端口模板**：CTCC/CMCC/CUCC 的 `1645/1646` + 固定 NAS-IP 模板化
+   （当前由 `radius_upstream.auth_port/acct_port` 和显式 type-4 属性配置，可用但无一键模板；
+   不复制 Java 部署环境的私有 IP）。
+2. **DNS 服务器抄送**：计费抄送到 DNS 服务器带 `Class` 运营商标识，本项目抄送机制可复用，
    但专用 `sendDns` 语义未实现。
-6. **真实设备联调**：所有字段映射需与选定代拨网关抓包复核。
+3. **真实设备联调**：所有字段映射需与选定代拨网关抓包复核。
+4. **跨实例拒绝原因共享**：当前缓存为进程内；若需要全局一致，应改用已接线的 Redis Store。
 
 ---
 

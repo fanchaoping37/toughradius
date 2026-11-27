@@ -47,11 +47,19 @@ A pluggable EAP handler registry covers both challenge and tunneled methods:
 - 📈 **Real-time Monitoring** - Online session monitoring and accounting record queries
 - 🔍 **Log Auditing** - Detailed authentication and accounting logs
 
+### Commercial Campus AAA (second development)
+
+- 💳 **Verified payments** - WeChat Pay v3, Alipay RSA2 and campus-card HMAC callbacks are verified per channel before settlement; amounts are checked against orders.
+- 📒 **Double-entry finance** - Balanced ledger entries for recharge, usage and refunds, with idempotent debits/credits and an audit API.
+- 🔄 **Session reconciliation** - Stop-Missing, out-of-order packets, NAS reboot and dead-letter replay run on a periodic worker.
+- 🔌 **Dial gateway integration** - External PPPoE gateways are treated as NAS devices; RADIUS/CoA routing, VSA injection and PANABIT Stop linkage are configuration-driven.
+
 ### Integration Capabilities
 
 - **Multi-Database Support** - PostgreSQL, SQLite
 - 🔌 **Flexible Extension** - Supports custom authentication and accounting logic
 - 📡 **Multi-Vendor VSA** - Huawei, Mikrotik, Cisco, H3C, etc.
+- 🧩 **Optional Redis / ClickHouse** - Shared idempotency fast path and high-volume accounting archive (both opt-in).
 
 ## 🚀 Quick Start
 

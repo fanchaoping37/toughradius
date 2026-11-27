@@ -4,7 +4,7 @@
 > 更新日期：2026-11-27
 > 仓库：`fanchaoping37/toughradius`（上游 `talkincode/toughradius`）
 > 开发分支：`dev-freeradius-compare`
-> 基准提交：`8a1966cf1b6271d8acedeb1a969b30ebda6b5822`（架构边界修正：代拨网关外部化）
+> 基准提交：`ab2175ba77bedf153d4f032064ce57a6fd1b1eea`（商业化闭环：支付验签、双分录/退款、会话对账、代拨适配、缓存/归档接线）
 > 参考范式：用户提供的 Java 版《Radius-Vue-Plus 架构与开发基线》。本文合并此前四批二开的设计说明，
 > 历史审查证据见 `docs/freeradius-comparison.md`、`docs/campus-aaa-second-dev.md`、
 > `docs/campus-aaa-fourth-dev.md`、`docs/portal-v2-integration.md`、
@@ -92,11 +92,11 @@ LCP/IPCP、PAP/CHAP 拨号、会话态与内核转发均**不属于本项目**�
 | `internal/accessnet` | DHCP/DNS/DHCPv6/Captive 统一装配 | 已接线（默认关闭） |
 | `internal/dhcp` / `dnsintercept` / `dhcpv6` | RFC 2131 / 1035 / 3315 接入网服务 | 已接线（默认关闭） |
 | `internal/captive` | HTTP 302 与内置登录页（二开突破项目"不托管登录页"铁律） | 已接线（默认关闭） |
-| `internal/billing` | 计费引擎：整数分/秒/字节、赠品优先、乐观锁、幂等 | 已接线 |
+| `internal/billing` | 计费引擎：整数分/秒/字节、赠品优先、乐观锁、幂等、双分录/退款、会话对账 | 已接线 |
+| `internal/payment` | 微信 v3 / 支付宝 RSA2 / 一卡通 HMAC 验签网关 | 已接线（`payment.enabled=true` 时强制渠道验签） |
+| `internal/cache` | Redis TTL K/V + 内存实现 | 已接线（支付回调幂等快路径；显式启用 Redis 不可达时失败关闭） |
+| `internal/analytics` | ClickHouse 话单归档 | 已接线（会计处理成功后异步批量写入，默认关闭） |
 | ~~`internal/pppoe`~~ | **已删除**：PPPoE 拨号属独立代拨网关，非本系统职责（2026-11-27） | 不适用 |
-| `internal/payment` | 微信 v3 / 支付宝 RSA2 / 一卡通 HMAC 验签 | **未接线**（孤儿包） |
-| `internal/cache` | Redis TTL K/V + 内存实现 | **未接线**（孤儿包） |
-| `internal/analytics` | ClickHouse 话单归档 | **未接线**（孤儿包） |
 | `internal/ldapauth` | LDAP/AD Bind 口令校验（仅 PAP 族） | 已接线 |
 | `internal/benchmark` | RADIUS 压测客户端 | 命令行工具 |
 | `pkg/` | certgen / common / excel / metrics / timeutil / validator / validutil / web | 公共库 |
@@ -211,7 +211,11 @@ LCP/IPCP、PAP/CHAP 拨号、会话态与内核转发均**不属于本项目**�
 
 - `RadiusOnline` 为在线会话，`RadiusAccounting` 为话单；Start/Stop 由 handler 写入。
 - `RadiusOnline` 已加 `ProxyUpstream` / `ProxyRealm` 列（**未写值**，预留会话溯源）。
-- Stop-Missing、乱序、NAS 重启的自动对账 Worker 未实现。
+- **Stop-Missing / 乱序 / NAS 重启对账已实现**（`internal/billing/reconciliation.go`）：
+  周期任务每 5 分钟运行；无 Stop 的在线会话用三处累计计数器的最大值合成 Stop 话单并删除在线行；
+  Accounting-On 的 RFC 2869 Event-Timestamp 触发 NAS 范围对账；死信按 10 分钟静默窗口重放。
+  写操作在事务内且以 `recon-stop:<session>` 唯一键幂等。
+- 原始报文在正常 handler 成功后标记 `consumed=true`；失败/遗留由死信恢复处理。
 - Usage 是计量事实，不是扣费指令；计费扣减见第 8 节。
 
 ---
@@ -224,6 +228,7 @@ LCP/IPCP、PAP/CHAP 拨号、会话态与内核转发均**不属于本项目**�
   `Role = proxy | replicate`。
 - `radius_realm_route`：`Realm/Strategy/UpstreamIds/UserPrefix/UserSuffix/MappedPassword/AcctMode/Status`；
   `Strategy = single | round_robin | weight`；`AcctMode = both | forward | local`。
+  代拨适配字段：`DialVendor / DialFilterID / DialVendorAttrsJSON`，由管理 API 与运行时双重校验。
 
 ### 7.2 能力
 
@@ -236,6 +241,9 @@ LCP/IPCP、PAP/CHAP 拨号、会话态与内核转发均**不属于本项目**�
 | 漫游 | `user@realm` 按域匹配（大小写不敏感）到对应上游池 | 已接线 |
 | CoA 方式对接上游 | 管理端踢线时按转换后用户名向上游发 Disconnect | 已接线 |
 | RADIUS 协议方式中继 | RFC 5176 DAS 入站（3799）校验密钥与 MA 后中继到 NAS | 已接线（默认关闭） |
+| 代拨请求侧属性注入 | Filter-Id 默认 `__PAIPPXY__`（PANABIT）/ `__DIALPROXY__`（XuJing）、DRCOM 属性裁剪、原始 VSA 十六进制注入 | 已接线（配置驱动，未硬编码运营商私有 IP） |
+| 上游拒绝原因缓存 | 按用户名缓存 5 分钟，仅回显 Reply-Message，不改变认证结果 | 已接线（进程内，多实例不共享） |
+| PANABIT Stop 联动 | Stop 计费向上游 CoA 端口发 Disconnect | 已接线（依赖入口 dedup，复用 dynauth 指标） |
 | EAP 代理 | 有状态 EAP 中继未实现，请求落本地管线 | 未实现 |
 
 上游/路由表 30 秒 TTL 缓存；心跳依赖 `radius.Client` 重传与超时，无主动健康检查。
@@ -251,14 +259,19 @@ LCP/IPCP、PAP/CHAP 拨号、会话态与内核转发均**不属于本项目**�
 - 规则：包月 `monthly`、包天 `daily`、时长 `time`、流量 `traffic`、阶梯 `tiered`、封顶 `capped`、组合 `combo`；
   支持优惠时段与累计阶梯（左闭右开、末档延用）。
 - 订单 / 支付回调 / 充值卡兑换 / 账单：`BillingOrder`、`BillingPayment`、`BillingCard`、`BillingCardBatch`。
-- 管理 API：`/api/v1/billing/*`（账户、套餐、订阅、流水、订单、支付回调）。
+- **财务双分录账本与退款**：`billing_ledger_entry` / `billing_refund`；充值、会话消费、退款均在同一事务内写平衡分录；
+  退款校验剩余可退金额、CAS 扣回现金、更新支付单/订单状态，重复 Idempotency-Key 幂等。
+- **支付渠道验签已接线**：`payment.enabled=true` 时微信 v3（RSA-SHA256 + AES-256-GCM）、支付宝 RSA2、
+  一卡通 HMAC 按渠道配置验签；验签后才校验订单金额并结算。裸 HMAC 仅作为 `payment.enabled=false` 的兼容回退，
+  不得用于生产。
+- 管理 API：`/api/v1/billing/*`（账户、套餐、订阅、流水、订单、支付回调、对账、账本、退款）。
 
 ### 8.2 未完成
 
-- 财务双分录账本、预付/后付账期结算、退款/冲正、发票、欠费控制与对账。
+- 预付/后付账期结算、发票、欠费停机策略的自动执行（当前账务可扣费但未有完整信用控制周期）。
 - ACADEMIC_TERM 学期周期需学校日历配置，不臆造起止时间。
-- `payment` 包的三个渠道 Provider 未接线；当前 `PaymentNotify` 仅用 `X-Signature` + `web.secret` 做裸 HMAC，
-  不走渠道验签，不能视为微信/支付宝生产回调能力。
+- 真实商户凭证与渠道回调联调；多实例 Redis 共享缓存已可配置，但渠道侧生产证书/密钥需部署时注入。
+- 账期对账报表与财务导出尚未形成正式凭证格式。
 
 ---
 
@@ -328,9 +341,9 @@ PPPoE/IPoE 拨号由**独立代拨聚合网关**承担，本项目只做 RADIUS/
 | 计费受理 | 网关 → 本项目 1813 | Start/Interim/Stop、RFC 合规、去重、话单；`acct_mode` 控制转发 | 已接线，待设备联调 |
 | CoA/DM 下发 | 本项目 → 网关 3799 | `CoAService` + `radius_coa_task` 落库重投 | 已接线 |
 | 反向 DAS | 网关/上游 → 本项目 3799 | `dynauth_server.go` 校验后中继到 NAS | 已接线（默认关闭） |
-| 上游请求侧 VSA 注入 | 本项目 → 运营商 AAA | `Filter-Id=__DIALPROXY__`、`VSA 4881/156=CMCC` 等 | **未实现** |
-| 运营商拒绝原因短时缓存 | 本项目内部 | Java 侧 `PPPOE_AUTH_MESSAGE` 5 分钟缓存 | **未实现** |
-| PANABIT Stop 自动 Disconnect | 本项目 → 上游 3799 | 计费 Stop 触发专线 Disconnect 绑定 | **未实现** |
+| 上游请求侧 VSA 注入 | 本项目 → 运营商 AAA | `Filter-Id` 厂商默认值、DRCOM 属性裁剪、`dial_vendor_attrs_json` 原始 VSA 字节注入；锐捷 4881/156 等私有值由路由配置提供，不硬编码 | 已接线，待设备联调 |
+| 运营商拒绝原因短时缓存 | 本项目内部 | 按用户名缓存上游 Reply-Message 5 分钟，仅影响回显文案 | 已接线（进程内，多实例不共享） |
+| PANABIT Stop 自动 Disconnect | 本项目 → 上游 3799 | Stop 计费复用选中上游，向其 CoA 端口发 Disconnect | 已接线，待设备联调 |
 
 **已删除**：`internal/pppoe`（Discovery/LCP/AF_PACKET）——属于独立代拨网关，不在本系统范围。
 IPoE 是事实标准组合（DHCP Option 82 + Portal + RADIUS CoA），非独立 RFC。
@@ -356,16 +369,18 @@ IPoE 是事实标准组合（DHCP Option 82 + Portal + RADIUS CoA），非独立
 
 ## 13. 管理面、开放 API 与前端
 
-- 19 组路由注册函数，统一前缀 `/api/v1`；角色 `LevelSuper / LevelAdmin / LevelOperator`。
+- 20 组路由注册函数，统一前缀 `/api/v1`；角色 `LevelSuper / LevelAdmin / LevelOperator`。
+  新增财务端点：对账、NAS 重启对账、死信重放、账本查询、退款、退款列表。
 - JWT：HS256，`web.secret` 签名，12h；跳过前缀含 `/auth/login`、`/auth/refresh`、`/open`。
 - 开放 API `POST /open/*`：AppKey + Timestamp + Nonce + HMAC-SHA256，5 分钟窗口、Nonce 防重放、
   QPS 限流、Idempotency-Key 24h、`SysOprLog` 审计、traceId；**默认关闭（fail-closed）**。
-- 前端：react-admin 资源页 14 个（含二开 `proxy.tsx` 的代理/域路由/Portal NAS/账户/订单/CoA 任务）。
+- 前端：react-admin 资源页 16 个（含二开 `proxy.tsx` 的代理/域路由/Portal NAS/账户/订单/CoA 任务，
+  以及 `finance.tsx` 的账本与退款审计页；代拨厂商字段已接入域路由表单）。
 - 小程序：`miniprogram/pages/login` 走 Portal auth_ticket；API 工具由后端签名，不内嵌 AppSecret。
 
 ---
 
-## 14. 数据模型（27 张表）
+## 14. 数据模型（29 张表）
 
 | 分组 | 表 |
 |---|---|
@@ -376,7 +391,8 @@ IPoE 是事实标准组合（DHCP Option 82 + Portal + RADIUS CoA），非独立
 | 话单合规 | `radius_acct_record`、`radius_acct_dedup` |
 | CoA | `radius_coa_task` |
 | 计费 | `billing_account`、`billing_asset_flow`、`billing_plan`、`billing_subscription`、
-  `billing_session_usage`、`billing_charge`、`billing_order`、`billing_payment`、`billing_card`、`billing_card_batch` |
+  `billing_session_usage`、`billing_charge`、`billing_order`、`billing_payment`、`billing_card`、`billing_card_batch`、
+  `billing_ledger_entry`、`billing_refund` |
 
 迁移清单 `internal/domain/tables.go` 与实体一一对应；测试夹具 `internal/adminapi/test_helpers_test.go` 单独列出迁移表。
 
@@ -384,14 +400,16 @@ IPoE 是事实标准组合（DHCP Option 82 + Portal + RADIUS CoA），非独立
 
 ## 15. 配置基线
 
-`AppConfig` 11 个顶层段：`System / Web / Database / Radiusd / Portal / Captive / DHCP / DNSRedirect / IPv6 / OpenAPI / Logger`。
+`AppConfig` 14 个顶层段：`System / Web / Database / Radiusd / Portal / Captive / DHCP / DNSRedirect / IPv6 / OpenAPI / Payment / Cache / Analytics / Logger`。
 `radiusd` 内嵌 `proxy_*` / `dynauth_*` 字段。环境变量统一前缀 `TOUGHRADIUS_`，覆盖顺序：
 `-c` 指定 YAML → `./toughradius.yml` → `/etc/toughradius.yml` → 默认值 → 环境变量覆盖。
 
 全部 `Enabled` 开关：`system.debug`、`web.tls_enabled`、`database.debug`、`radiusd.enabled/debug`、
 `radiusd.proxy_enabled`、`radiusd.dynauth_enabled`、`portal.enabled`、`captive.enabled`、`dhcp.enabled`、
-`dns_redirect.enabled`、`ipv6.enabled`、`openapi.enabled`、`logger.file_enable`。
-二开环境变量见 `.env.example`（**尚未覆盖二开段，待补**）。
+`dns_redirect.enabled`、`ipv6.enabled`、`openapi.enabled`、`payment.enabled`、`cache.enabled`、
+`analytics.enabled`、`logger.file_enable`。
+二开环境变量（代理/Portal/引流/开放 API/支付/缓存/分析）已完整写入 `.env.example`。
+显式启用 Redis 或 ClickHouse 但连接失败时启动失败关闭，避免静默降级为单机状态。
 
 ---
 
@@ -407,12 +425,12 @@ FreeRADIUS 是协议与 AAA 成熟度参照，不要求复制其 C 模块架构�
 | EAP-SIM/AKA/FAST/TEAP | 常量占位 | 未实现 |
 | authorize/authenticate/post-auth | 9 阶段管线 | 已实现 |
 | SQL / LDAP 后端 | GORM + `ldapauth` | 已实现（PostgreSQL/SQLite） |
-| detail / SQL 话单 | `radius_accounting` + raw_attrs | 部分实现，对账待补 |
-| SQL Counter / Quota | `billing` 引擎 | 部分实现，财务闭环待补 |
+| detail / SQL 话单 | `radius_accounting` + raw_attrs + 对账 Worker | 已实现，待设备联调与报表导出 |
+| SQL Counter / Quota | `billing` 引擎 + 双分录账本 | 已实现基础闭环，账期/发票待补 |
 | Proxy / Home Server / Realm | `radiusd/proxy` | 已实现（四批二开） |
 | Dynamic Authorization | CoAService + DynAuth + task | 部分实现，租约/审计待补 |
 | Virtual Servers / unlang | 版本化策略 + registry | 项目采用类型安全注册，非复制 unlang |
-| HA / Load Balance / Observability | 代理池 + `pkg/metrics` 内存占位 | 部分实现，Prometheus/H A 待补 |
+| HA / Load Balance / Observability | 代理池 + `pkg/metrics` + Redis 可选共享状态 + ClickHouse 归档 | 部分实现，Prometheus/多实例租约待补 |
 | DHCP / DNS 等非 RADIUS 模块 | `accessnet` | 已接线（默认关闭） |
 | PPPoE 拨号 | 外部独立代拨网关 | **非本系统职责**：本系统仅以 RADIUS/CoA 对接，见第 11.2 节 |
 
@@ -433,23 +451,23 @@ CoA 租约与审计导出、HA/灾备、License、安装升级回滚、数据迁
 
 ---
 
-## 18. 当前状态矩阵（2026-11-27，基准 3e61b9d）
+## 18. 当前状态矩阵（2026-11-27，基准 ab2175b）
 
 | 功能域 | 状态 | 已有实现 | 缺失 / 待验证 |
 |---|---|---|---|
 | RADIUS Access | 已实现，待验收 | 9 阶段管线、PAP/CHAP、策略、限流、MA | 设备互通、属性矩阵、并发压测 |
-| Accounting / Session | 部分实现 | Start/Interim/Stop、RFC 合规、去重、话单 | Stop-Missing 对账、乱序/NAS 重启、死信恢复 |
+| Accounting / Session | 已实现，待设备联调 | Start/Interim/Stop、RFC 合规、去重、话单、Stop-Missing/乱序/NAS 重启/死信对账 | 报表导出、多实例并发验收 |
 | 代理 / 抄送 / 漫游 | 已实现，待验收 | realm 路由、三种池、凭据转换、DAS 中继 | 主动健康检查、EAP 代理、多实例会话 |
 | EAP | 部分实现 | MD5/MSCHAPv2/TLS/PEAP/TTLS/PWD | SIM/AKA/FAST/TEAP、OTP、真实客户端互通 |
-| 计费 / 账务 | 部分实现 | 多资产、赠品优先、幂等、订单/卡 | 双分录账本、账期结算、退款冲正、发票 |
+| 计费 / 账务 | 部分实现 | 多资产、赠品优先、幂等、订单/卡、双分录账本、退款冲正、账本 API | 账期结算、发票、欠费自动停机策略 |
 | CoA / Disconnect | 部分实现 | RFC 5176、任务持久化、固定 ID 重投、DAS 入站 | 租约 fencing、UNKNOWN 状态、审计导出、白名单 |
 | Portal V2 | 部分实现 | 协议侧、auth_ticket、HTTP bridge、内置登录页 | V3/H3C、MAC-Trigger、设备互通、多实例状态 |
 | 接入网 DHCP/DNS/DHCPv6 | 已实现，待验证 | 协议与服务、Portal URL 下发、溯源 | 真实设备联调、地址池持久化 |
-| 代拨网关对接（RADIUS/CoA） | 已接线，待联调 | 网关作为 NAS 认证/计费受理、账号转换转发、CoA/DM 双向 | 请求侧 VSA 注入、拒绝原因缓存、PANABIT Stop 联动、设备联调；契约见 `docs/dial-gateway-integration.md` |
+| 代拨网关对接（RADIUS/CoA） | 已接线，待联调 | 网关作为 NAS 认证/计费受理、账号转换转发、CoA/DM 双向、VSA 注入、拒绝原因缓存、PANABIT Stop 联动 | 真实设备抓包联调、CTCC/CMCC/CUCC 固定 IP 模板、DNS 抄送；契约见 `docs/dial-gateway-integration.md` |
 | ~~PPPoE 拨号实现~~ | **已移出本系统** | 独立代拨聚合网关项目负责 | 本系统不实现 Discovery/LCP/AF_PACKET；`internal/pppoe` 已删除 |
-| 支付渠道 | 库已实现未接线 | 微信 v3 / 支付宝 RSA2 / 一卡通验签 | 生产入口接线、真实商户凭证、回调幂等 |
-| Redis / ClickHouse | 库已实现未接线 | Store 接口 + Redis、MergeTree 归档 | 生产接线、DSN 注入、故障降级（Redis 不自动降级） |
-| 管理面 / 开放 API | 已实现 | 19 组路由、JWT、HMAC、幂等、审计 | 全量前端页、配置发布审批、License |
+| 支付渠道 | 已接线，待商户联调 | 微信 v3 / 支付宝 RSA2 / 一卡通验签、金额校验、回调幂等、账本联动 | 真实商户凭证与渠道回调联调 |
+| Redis / ClickHouse | 已接线，待部署验证 | Store 接口 + Redis 支付幂等快路径、MergeTree 话单归档、显式启用失败关闭 | DSN 注入、故障演练、多实例共享验收 |
+| 管理面 / 开放 API | 已实现 | 20 组路由、JWT、HMAC、幂等、审计、财务 API | 配置发布审批、License |
 | 前端 / 小程序 | 部分实现 | 14 个资源页、小程序登录 | 依赖未安装验证、二开页面设备联调 |
 | 等保材料 | 文档模板 | `docs/compliance/README.md` | 正式测评报告、制度落地证据 |
 
@@ -460,15 +478,15 @@ CoA 租约与审计导出、HA/灾备、License、安装升级回滚、数据迁
 任何能力只有在**代码、数据库、权限、安全、审计、文档与必要验证**均有证据后才能标记"完成"。
 静态源码、接口契约、数据库表、监听端口或设计文档都不能单独证明业务闭环或生产就绪。
 
-**已知失败（非本次引入，需在后续验收中修复）**：
+**本轮验证结果**：
 
-1. `config` 包 14 个断言失败：`GetXxxDir` 用 `filepath.Join` 在 Windows 产生反斜杠，与期望 POSIX 路径不符。
-2. EAP sqlite 集成测试（`TestEAPMD5IntegrationSuccess` 等）：`internal/app/database.go` 用 `path.IsAbs`
-   而非 `filepath.IsAbs` 判断 Windows 盘符路径，导致 sqlite 打开失败；`-short` 模式跳过。
-3. `coverage.out` 为陈旧产物，仅覆盖 radiusd 子集且引用已移动文件，不可当全项目覆盖率。
-
-`go test -short ./internal/...` 当前 56 个包 ok、1 个包（config）失败；`go build ./...` 与
-`GOOS=linux GOARCH=amd64 go build ./...` 均通过。
+1. `go build ./...` 与 `GOOS=linux GOARCH=amd64 go build ./...` 均通过。
+2. `go test ./... -count=1` **全量通过**（含 config、EAP SQLite、billing、radiusd 等包）。
+   此前 Windows 路径断言与 `path.IsAbs` 问题已修复：配置路径保持 workdir 的分隔符约定，
+   配置中的 `/etc/...` 在 Windows 也识别为绝对路径；SQLite 使用 `filepath.IsAbs/Join`。
+3. 前端 `web/` 依赖未安装（无 `node_modules`），本轮未运行 `npm run type-check`；
+   新增 `finance.tsx` 与域路由字段需在依赖安装后完成前端构建验证。
+4. `coverage.out` 为陈旧产物，不可当全项目覆盖率。
 
 ---
 
@@ -479,3 +497,4 @@ CoA 租约与审计导出、HA/灾备、License、安装升级回滚、数据迁
 | 2026-11-27 | `3e61b9d` | 建立唯一有效基线。汇总四批二开：`064eeec` 代理子系统核心、`db452b7` DynAuth、`21db012` 管理 API、`094b575` Portal V2、`f118a52` 校园 AAA 核心、`3e61b9d` 九大接入网/认证增强模块。 |
 | 2026-11-27 | `3e61b9d` | 明确"开发前对照、开发后更新、旧版删除"规则；标注孤儿包（payment/cache/analytics/pppoe）与已知失败。 |
 | 2026-11-27 | `8a1966cf1b6271d8acedeb1a969b30ebda6b5822` | **边界冻结**：PPPoE 代拨聚合网关为独立外部系统，本系统只以 RADIUS/CoA 对接代拨设备；删除误置的 `internal/pppoe` 包；新增 `docs/dial-gateway-integration.md` 对接契约（依据 XuJing-Radius `DialProxy.java`）；更新第 2.1/2.3/11/16/18 节。孤儿包标注移除 pppoe。 |
+| 2026-11-27 | `ab2175ba77bedf153d4f032064ce57a6fd1b1eea` | **商业化闭环**：微信/支付宝/一卡通渠道验签接线；双分录账本与退款冲正；Stop-Missing/乱序/NAS 重启/死信对账与周期 Worker；代拨 VSA 注入、拒绝原因缓存、PANABIT Stop 联动；Redis/ClickHouse 生产接线；财务 API 与前端审计页；`.env.example` 覆盖全部二开段；修复 Windows 路径测试。更新第 2.3/6.2/7/8/11/13/14/15/16/18/19 节。 |
