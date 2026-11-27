@@ -52,7 +52,8 @@ A pluggable EAP handler registry covers both challenge and tunneled methods:
 - 💳 **Verified payments** - WeChat Pay v3, Alipay RSA2 and campus-card HMAC callbacks are verified per channel before settlement; amounts are checked against orders.
 - 📒 **Double-entry finance** - Balanced ledger entries for recharge, usage and refunds, with idempotent debits/credits and an audit API.
 - 🔄 **Session reconciliation** - Stop-Missing, out-of-order packets, NAS reboot and dead-letter replay run on a periodic worker.
-- 🔌 **Dial gateway integration** - External PPPoE gateways are treated as NAS devices; RADIUS/CoA routing, VSA injection and PANABIT Stop linkage are configuration-driven.
+- 🔌 **Dial / upstream AAA integration** - Every access type (IPoE, PPPoE, EAP, Portal Web) arriving from a NAS can be translated to a carrier account and forwarded to an **external** dial gateway / upstream operator AAA over RADIUS (PAP only) or CoA/DM; VSA injection and PANABIT Stop linkage are configuration-driven. Dialing itself is a separate external system, not implemented here.
+- 🧭 **Access-network boundary** - DHCP/DHCPv6 address push, DNS redirection, Captive 302 and the Portal Web login-page URL are the NAS's job; in-repo access-network modules are boundary-external reference implementations (disabled by default, not part of the commercial deliverable).
 
 ### Integration Capabilities
 
@@ -176,7 +177,7 @@ Production mode (`system.debug=false` or `logger.mode=production`) refuses to st
 
 - 🏛️ **[Architecture Baseline](docs/ARCHITECTURE-BASELINE.md)** - The single authoritative source of truth for architecture, module status matrix and acceptance criteria (the reference for every development iteration)
 - 🧭 **[Project Guide](docs/PROJECT-GUIDE.md)** - Architecture and business flows: layering, request sequences (auth/accounting/proxy/CoA/Portal), data model and a code-reading tour
-- 🔌 **[Dial Gateway Integration](docs/dial-gateway-integration.md)** - Contract for connecting an external PPPoE dial aggregation gateway over RADIUS/CoA (PPPoE itself is a separate project, not implemented here)
+- 🔌 **[Dial Gateway Integration](docs/dial-gateway-integration.md)** - Contract for connecting an external dial gateway / upstream operator AAA over RADIUS/CoA across all access types (IPoE, PPPoE, EAP, Portal Web); PPPoE dialing itself is a separate external project, not implemented here
 - 📚 **[Bilingual Handbook (mdbook)](https://www.toughradius.net/)** - CN/EN documentation site (source in [`docs-site/`](docs-site/)) consolidating the overview, security policy, RFC reference, and more; built, link-checked, and deployed to GitHub Pages by CI
 - [Roadmap](docs/roadmap.md) - Milestones and the EAP suite delivery plan (EAP-TLS / PEAP / TTLS, with TLS 1.3, TEAP, EAP-PWD tracked)
 - [Feature Checklist](docs/feature-checklist.md) / [English](docs/feature-checklist.en.md) - Product scope baseline for aligning future development with feature IDs and avoiding uncontrolled direction changes

@@ -6,10 +6,19 @@
 Web 重定向、不做短信/微信/券码开户。认证链路仍然是：
 
 ```text
-终端 → NAS（内置 Portal 页面）→ Portal UDP 50100↔2000 → NAS → RADIUS 1812 → ToughRADIUS
+终端 → NAS（引流 + Portal Web 登录页 URL 配置）→ Portal V2（本项目 50100 ↔ NAS 2000）→ NAS → RADIUS 1812 → ToughRADIUS
 ```
 
 RADIUS Access-Request 由 NAS 发出，本模块不代发；管理员踢线仍然走 RADIUS CoA/DM（3799）。
+
+**端口方向（2026-11-27 用户确认）**：Portal Web 认证（华为/CMCC V2）报文由本项目**发给 NAS**，
+**NAS 使用 UDP 2000**（`portal.nas_port=2000`、`portal_nas.port=2000`）；本项目 Portal Server
+监听 **UDP 50100**，用于接收 NAS 的 ACK_CHALLENGE / ACK_AUTH / NTF_LOGOUT / 心跳。
+设备侧把 Portal Server 指向本项目 50100。
+
+**接入网引流边界**：DHCP/DHCPv6 地址与 Option（含 Portal URL）、DNS 重定向、Captive 302
+**由 NAS 给用户推送**，且 **Portal Web 登录页 URL 在 NAS 上配置**；本项目不提供这些 Server、
+不托管登录页（仓库内 `internal/captive` 仅为边界外参考实现，默认关闭、不纳入交付面）。
 
 ## 启用
 
