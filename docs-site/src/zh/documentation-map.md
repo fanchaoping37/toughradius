@@ -32,6 +32,7 @@
 | 安全策略          | 安全公告与升级指引                          | [安全策略](./security-policy.md)（权威） · [SECURITY.md](https://github.com/talkincode/toughradius/blob/main/SECURITY.md)（指针） |
 | 架构基线          | **唯一有效**的架构与开发状态基线、状态矩阵与验收口径 | [docs/ARCHITECTURE-BASELINE.md](https://github.com/talkincode/toughradius/blob/main/docs/ARCHITECTURE-BASELINE.md) |
 | 项目说明          | 架构与业务流转说明（分层、时序、数据模型、读码路线） | [docs/PROJECT-GUIDE.md](https://github.com/talkincode/toughradius/blob/main/docs/PROJECT-GUIDE.md) |
+| 协议规范手册      | **唯一有效**的协议规范与业务流程手册：RADIUS / Portal / MAC-Trigger 协议族与端口辨析、报文结构、AAA 流程、安全校验、FreeRADIUS 对照、已知偏差清单 | [docs/PROTOCOL-SPEC.md](https://github.com/talkincode/toughradius/blob/main/docs/PROTOCOL-SPEC.md) |
 | 代拨 / 上游 AAA 对接 | 外部代拨网关 ↔ 本项目 RADIUS/CoA 对接契约；全接入类型（IPoE/PPPoE/EAP/Portal）账号转换、统一 PAP、属性清单与厂商差异 | [docs/dial-gateway-integration.md](https://github.com/talkincode/toughradius/blob/main/docs/dial-gateway-integration.md) |
 | 功能清单          | 功能范围基线（`TR-F` 编号）                 | [docs/feature-checklist.md](https://github.com/talkincode/toughradius/blob/main/docs/feature-checklist.md) · [English](https://github.com/talkincode/toughradius/blob/main/docs/feature-checklist.en.md) |
 | 路线图            | 长期路线图与里程碑                          | [docs/roadmap.zh.md](https://github.com/talkincode/toughradius/blob/main/docs/roadmap.zh.md) |

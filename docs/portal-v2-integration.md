@@ -11,6 +11,12 @@ Web 重定向、不做短信/微信/券码开户。认证链路仍然是：
 
 RADIUS Access-Request 由 NAS 发出，本模块不代发；管理员踢线仍然走 RADIUS CoA/DM（3799）。
 
+> **协议族辨析**：UDP 2000 / 50100 在华为/CMCC Portal V2、NAS Portal Client、
+> Portal MAC-Trigger 三族协议中含义不同；RADIUS Attribute 52（`Acct-Input-Gigawords`）与
+> MAC-Trigger Type 52（`NTF_MACUSER_LOGOUT`）也完全不同。新增设备前先查
+> [`PROTOCOL-SPEC.md`](./PROTOCOL-SPEC.md) 第 2 节端口辨析与第 5.4 节 Profile 证据门槛，
+> 不得按端口号或 Type 编号推断协议兼容。
+
 **端口方向（2026-11-27 用户确认）**：Portal Web 认证（华为/CMCC V2）报文由本项目**发给 NAS**，
 **NAS 使用 UDP 2000**（`portal.nas_port=2000`、`portal_nas.port=2000`）；本项目 Portal Server
 监听 **UDP 50100**，用于接收 NAS 的 ACK_CHALLENGE / ACK_AUTH / NTF_LOGOUT / 心跳。

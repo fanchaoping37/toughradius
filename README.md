@@ -176,6 +176,7 @@ Production mode (`system.debug=false` or `logger.mode=production`) refuses to st
 ## 📖 Documentation
 
 - 🏛️ **[Architecture Baseline](docs/ARCHITECTURE-BASELINE.md)** - The single authoritative source of truth for architecture, module status matrix and acceptance criteria (the reference for every development iteration)
+- 📐 **[Protocol Specification & Business Flows](docs/PROTOCOL-SPEC.md)** - The single authoritative protocol handbook: RADIUS / Portal / MAC-Trigger protocol families and port disambiguation, packet structures, AAA sequences, security validation, FreeRADIUS 3.2.x mapping and the known-deviation checklist for future development
 - 🧭 **[Project Guide](docs/PROJECT-GUIDE.md)** - Architecture and business flows: layering, request sequences (auth/accounting/proxy/CoA/Portal), data model and a code-reading tour
 - 🔌 **[Dial Gateway Integration](docs/dial-gateway-integration.md)** - Contract for connecting an external dial gateway / upstream operator AAA over RADIUS/CoA across all access types (IPoE, PPPoE, EAP, Portal Web); PPPoE dialing itself is a separate external project, not implemented here
 - 📚 **[Bilingual Handbook (mdbook)](https://www.toughradius.net/)** - CN/EN documentation site (source in [`docs-site/`](docs-site/)) consolidating the overview, security policy, RFC reference, and more; built, link-checked, and deployed to GitHub Pages by CI

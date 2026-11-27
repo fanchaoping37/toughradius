@@ -449,6 +449,7 @@ go run ./cmd/benchmark ...      # 压力测试
 |---|---|
 | [`ARCHITECTURE-BASELINE.md`](./ARCHITECTURE-BASELINE.md) | **唯一有效**的架构与开发状态基线（状态矩阵、验收口径） |
 | 本文（`PROJECT-GUIDE.md`） | 面向读者的架构与业务流转说明（怎么跑起来、请求怎么流转） |
+| [`PROTOCOL-SPEC.md`](./PROTOCOL-SPEC.md) | **唯一有效**的协议规范与业务流程手册（报文结构、协议族端口辨析、交互顺序、安全校验、FreeRADIUS 对照、已知偏差清单） |
 | `dial-gateway-integration.md` | 代拨/上游 AAA 对接契约（外部系统；全接入类型账号转换、RADIUS/CoA、属性清单与厂商差异） |
 | `freeradius-comparison.md` | ToughRADIUS 与 FreeRADIUS 的功能模块对照证据 |
 | `campus-aaa-second-dev.md` | 第三批二开（话单合规/计费/CoA/Portal 票据/开放 API）实现说明 |

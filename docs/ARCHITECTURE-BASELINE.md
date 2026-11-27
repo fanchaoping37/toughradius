@@ -5,10 +5,12 @@
 > 仓库：`fanchaoping37/toughradius`（上游 `talkincode/toughradius`）
 > 开发分支：`dev-freeradius-compare`
 > 基准提交：`ab2175ba77bedf153d4f032064ce57a6fd1b1eea`（商业化闭环：支付验签、双分录/退款、会话对账、代拨适配、缓存/归档接线）
-> 参考范式：用户提供的 Java 版《Radius-Vue-Plus 架构与开发基线》。本文合并此前四批二开的设计说明，
-> 历史审查证据见 `docs/freeradius-comparison.md`、`docs/campus-aaa-second-dev.md`、
-> `docs/campus-aaa-fourth-dev.md`、`docs/portal-v2-integration.md`、
-> `docs/dial-gateway-integration.md`（代拨网关对接契约）。
+> 参考范式：用户提供的 Java 版《Radius-Vue-Plus 架构与开发基线》与《协议规范与业务流程手册》。
+> 本文合并此前四批二开的设计说明，历史审查证据见 `docs/freeradius-comparison.md`、
+> `docs/campus-aaa-second-dev.md`、`docs/campus-aaa-fourth-dev.md`、
+> `docs/portal-v2-integration.md`、`docs/dial-gateway-integration.md`（代拨网关对接契约）。
+> 协议层另见唯一有效手册 [`docs/PROTOCOL-SPEC.md`](./PROTOCOL-SPEC.md)：与本文并列、维度不同，
+> 本文管架构状态与验收口径，协议手册管线上规范、业务流程与已知偏差。
 >
 > **2026-11-27 追加（本轮性质）**：本轮为**业务规则澄清的文档更新**（7 条冻结语义），
 > **未改动任何代码**，代码基准提交仍为 `ab2175ba77bedf153d4f032064ce57a6fd1b1eea`。
@@ -28,6 +30,11 @@
 3. 本文的状态矩阵与已冻结架构决策；
 4. RFC / IANA / FreeRADIUS 3.2.x / 厂商协议与用户提供的参考资料；
 5. 历史专项文档与批处理说明（仅作证据，不与本文冲突解释）。
+
+> **协议层补充（2026-11-27）**：线上协议结构、字段语义、交互顺序、安全校验、失败处理、
+> 协议族端口辨析与已知偏差，以唯一有效手册 [`docs/PROTOCOL-SPEC.md`](./PROTOCOL-SPEC.md) 为查证入口。
+> 该手册的规范条文用于判断"实现是否合规"，**不用于判定"功能是否已完成"**；
+> 完成度一律以本文状态矩阵与源码为准。两文并列、维度不同，均禁止创建并存版本。
 
 > **冲突解释（2026-11-27 澄清轮）**：`docs/campus-aaa-fourth-dev.md` 等历史专项文档中
 > 把 DHCP/DNS/DHCPv6/Captive 写作"本项目二开能力"、把 PPPoE 代拨写作拨号用户专属、
@@ -171,6 +178,11 @@ ToughRADIUS 的最终目标是**可私有化部署、可多租户运营、可扩
 ---
 
 ## 4. RADIUS 协议与安全基线
+
+> 完整的线上协议规范（报文结构、Code / Attribute 表、三类 Authenticator、AAA 交互顺序、
+> 失败与 UNKNOWN 处理）、FreeRADIUS 3.2.x 阶段对照及**已知偏差清单 D1–D9** 见
+> [`docs/PROTOCOL-SPEC.md`](./PROTOCOL-SPEC.md)。本节只保留本项目的架构状态口径，
+> 避免把 RFC 条文或 Java 参考范式误读为已实现能力。
 
 ### 4.1 报文与字典
 
@@ -656,3 +668,4 @@ DNS 重定向、Captive 302、NAT/DPI/防私接/IPAM/设备配置下发。仓库
 | 2026-11-27 | `8a1966cf1b6271d8acedeb1a969b30ebda6b5822` | **边界冻结**：PPPoE 代拨聚合网关为独立外部系统，本系统只以 RADIUS/CoA 对接代拨设备；删除误置的 `internal/pppoe` 包；新增 `docs/dial-gateway-integration.md` 对接契约（依据 XuJing-Radius `DialProxy.java`）；更新第 2.1/2.3/11/16/18 节。孤儿包标注移除 pppoe。 |
 | 2026-11-27 | `ab2175ba77bedf153d4f032064ce57a6fd1b1eea` | **商业化闭环**：微信/支付宝/一卡通渠道验签接线；双分录账本与退款冲正；Stop-Missing/乱序/NAS 重启/死信对账与周期 Worker；代拨 VSA 注入、拒绝原因缓存、PANABIT Stop 联动；Redis/ClickHouse 生产接线；财务 API 与前端审计页；`.env.example` 覆盖全部二开段；修复 Windows 路径测试。更新第 2.3/6.2/7/8/11/13/14/15/16/18/19 节。 |
 | 2026-11-27 | 代码基准 `ab2175ba…` **不变**（本次仅文档提交，未改代码） | **业务规则澄清 7 条（用户确认，明确暂不开发）**：① 明确一次 Access-Request 中 `role=replicate` 异步抄送副本的触发点、目标、复制内容、附加 `Class`、`2s` fire-and-forget、不参与认证决策（新增 7.3，并纠正项目说明时序图误写为写 DB）；② 冻结"本项目 → 上游 RADIUS / 代拨 / 运营商 AAA **统一 PAP**、不使用 CHAP/MSCHAPv2"，如实标注代码仍会原样复制非 PAP 属性、待收紧；③ 冻结"**Accounting 按会话增量计费为必需能力（非可选）**"，如实标注 `ChargeSession` 引擎已实现但正常 Accounting 路径未接线、仅死信重放调用（新增 6.3）；④ 冻结"**CoA/强制下线也要给上游发**，按上游对接模式选择：CoA/DM → Disconnect-Request，仅 RADIUS → Accounting-Stop(2)"，标注待开发（新增 9.3）；⑤ 确认 Portal V2 方向：本项目监听 50100、报文**发往 NAS UDP 2000**；⑥ **边界修正**：DHCP/DNS/DHCPv6/Captive 引流由 **NAS 给用户推送**、**Portal Web 登录页 URL 在 NAS 配置**，仓库内模块降级为边界外参考实现、默认关闭、不纳入商业化交付面（本轮不删代码、不接线）；⑦ 明确链路 `NAS → 本项目 RADIUS → 外部代拨网关（外部系统）`，**代拨不限拨号用户**，IPoE/PPPoE/EAP/Portal 全接入类型均可把校园账号转换为运营商账号送上游 AAA，以 CoA 或 RADIUS 协议对接。更新第 2.1/2.3/3/5.2/6.3/7/8/9/10/11/16/17/18/19 节；同步 `docs/PROJECT-GUIDE.md`、`docs/dial-gateway-integration.md`、`docs/portal-v2-integration.md`、`README.md`、文档地图与 `.env.example` 注释。 |
+| 2026-11-27 | 代码基准 `ab2175ba…` **不变**（本次仅文档提交，未改代码） | **新增唯一有效协议规范手册** [`docs/PROTOCOL-SPEC.md`](./PROTOCOL-SPEC.md)：参考用户提供的 Java 版《Radius-Vue-Plus 协议规范与业务流程手册》，保留证据等级体系并拆分为 `PROJECT-JAVA`（参考范式）与 `PROJECT-GO`（本仓库现状）；新增第 2 节协议族/端口辨析（2000、50100、Type 52、Type 80 四类高危混淆）、第 5 节三族 Portal 协议边界、第 7 节 FreeRADIUS 3.2.x 到 Go 侧阶段映射、第 8 节已知偏差 D1–D9（合成 Stop、出站未收紧 PAP、增量计费未接线、上游下线模式选择、MA 默认 warn、重复请求/可靠投递、Portal 头长度 Profile、MAC-Trigger/NAS Portal Client 未实现、Secret 生命周期）、第 9 节开发审查清单（含本文第 1.3 节基线强制规则）。同步 `PROJECT-GUIDE.md`、`README.md`、双语文档地图与 `portal-v2-integration.md` 索引。**本轮未改动代码、未运行编译/测试/联调**；偏差仅登记，后续开发按第 1.3 节对照推进。 |
