@@ -166,6 +166,8 @@ Production mode (`system.debug=false` or `logger.mode=production`) refuses to st
 
 ## 📖 Documentation
 
+- 🏛️ **[Architecture Baseline](docs/ARCHITECTURE-BASELINE.md)** - The single authoritative source of truth for architecture, module status matrix and acceptance criteria (the reference for every development iteration)
+- 🧭 **[Project Guide](docs/PROJECT-GUIDE.md)** - Architecture and business flows: layering, request sequences (auth/accounting/proxy/CoA/Portal), data model and a code-reading tour
 - 📚 **[Bilingual Handbook (mdbook)](https://www.toughradius.net/)** - CN/EN documentation site (source in [`docs-site/`](docs-site/)) consolidating the overview, security policy, RFC reference, and more; built, link-checked, and deployed to GitHub Pages by CI
 - [Roadmap](docs/roadmap.md) - Milestones and the EAP suite delivery plan (EAP-TLS / PEAP / TTLS, with TLS 1.3, TEAP, EAP-PWD tracked)
 - [Feature Checklist](docs/feature-checklist.md) / [English](docs/feature-checklist.en.md) - Product scope baseline for aligning future development with feature IDs and avoiding uncontrolled direction changes
