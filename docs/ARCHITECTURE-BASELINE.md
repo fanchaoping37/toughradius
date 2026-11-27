@@ -4,10 +4,11 @@
 > 更新日期：2026-11-27
 > 仓库：`fanchaoping37/toughradius`（上游 `talkincode/toughradius`）
 > 开发分支：`dev-freeradius-compare`
-> 基准提交：`3e61b9de74d80b10f906e1260ade93ead10eb6b1`（第四批二开完成）
+> 基准提交：本次架构边界修正提交（见文末变更记录）
 > 参考范式：用户提供的 Java 版《Radius-Vue-Plus 架构与开发基线》。本文合并此前四批二开的设计说明，
 > 历史审查证据见 `docs/freeradius-comparison.md`、`docs/campus-aaa-second-dev.md`、
-> `docs/campus-aaa-fourth-dev.md`、`docs/portal-v2-integration.md`。
+> `docs/campus-aaa-fourth-dev.md`、`docs/portal-v2-integration.md`、
+> `docs/dial-gateway-integration.md`（代拨网关对接契约）。
 
 ---
 
@@ -53,8 +54,16 @@
 
 ### 2.1 定位
 
-ToughRADIUS 的最终目标是**可私有化部署、可多租户运营、可扩展集成的商业化 AAA 认证计费平台**，
-不是单一 RADIUS daemon，也不把 DHCP/DNS/NAT/DPI/PPPoE 全部塞进 RADIUS 实时核心。
+ToughRADIUS 的最终目标是**可私有化部署、可多租户运营、可扩展集成的商业化校园网 AAA 认证计费平台**，
+不是单一 RADIUS daemon，也不把 DHCP/DNS/NAT/DPI/**PPPoE 拨号**全部塞进 RADIUS 实时核心。
+
+**边界冻结（2026-11-27 用户确认）**：校园认证计费系统只承担用户/套餐/账务/计费/策略/管理台，
+以及通过 **RADIUS（1812/1813）与 CoA/DM（3799）对接代拨设备**。
+**PPPoE 代拨聚合网关是独立开发、独立部署的外部系统**——PPPoE Discovery（PADI/PADO/PADR/PADS）、
+LCP/IPCP、PAP/CHAP 拨号、会话态与内核转发均**不属于本项目**。
+代拨网关在本项目眼中就是一台 NAS（RADIUS Client），登记于 `net_nas`。
+据此已删除误置的 `internal/pppoe` 包；对接契约见 `docs/dial-gateway-integration.md`。
+
 当前代码是在开源 Go RADIUS 服务器（ants 协程池 + GORM + Echo）基础上，经四批二开扩展而来。
 
 ### 2.2 控制面与数据面
@@ -84,7 +93,7 @@ ToughRADIUS 的最终目标是**可私有化部署、可多租户运营、可扩
 | `internal/dhcp` / `dnsintercept` / `dhcpv6` | RFC 2131 / 1035 / 3315 接入网服务 | 已接线（默认关闭） |
 | `internal/captive` | HTTP 302 与内置登录页（二开突破项目"不托管登录页"铁律） | 已接线（默认关闭） |
 | `internal/billing` | 计费引擎：整数分/秒/字节、赠品优先、乐观锁、幂等 | 已接线 |
-| `internal/pppoe` | PPPoE Discovery/PPP 线格式 + Linux AF_PACKET | **未接线**（仅线格式层） |
+| ~~`internal/pppoe`~~ | **已删除**：PPPoE 拨号属独立代拨网关，非本系统职责（2026-11-27） | 不适用 |
 | `internal/payment` | 微信 v3 / 支付宝 RSA2 / 一卡通 HMAC 验签 | **未接线**（孤儿包） |
 | `internal/cache` | Redis TTL K/V + 内存实现 | **未接线**（孤儿包） |
 | `internal/analytics` | ClickHouse 话单归档 | **未接线**（孤儿包） |
@@ -297,7 +306,9 @@ Portal、NAS、RADIUS 是三个独立角色：Portal 经 NAS 触发认证，NAS 
 
 ---
 
-## 11. 接入网：DHCP / DNS / DHCPv6 / PPPoE
+## 11. 接入网与代拨设备对接
+
+### 11.1 接入网（本项目内，默认关闭）
 
 | 模块 | 依据 | 实现 | 状态 |
 |---|---|---|---|
@@ -305,10 +316,24 @@ Portal、NAS、RADIUS 是三个独立角色：Portal 经 NAS 触发认证，NAS 
 | DNS 引流 | RFC 1035 | 未认证用户 A 记录劫持到 Portal IP，白名单域名透传上游 | 已接线（默认关闭） |
 | DHCPv6 | RFC 3315/8415、7710 | Solicit/Advertise/Request/Reply/InfoReq、DUID、IA_NA/IAADDR、Option 103、地址→用户绑定反查 | 已接线（默认关闭） |
 | Captive 302 | 工程实践 | 未认证浏览器 302 到登录页，授权后放行 | 已接线（默认关闭） |
-| PPPoE/IPoE | RFC 2516、1661/1334 | Discovery 状态机、LCP/PAP、Tag TLV、Linux AF_PACKET | **未接线**：无服务端进程，`main.go` 无引用 |
 
-IPoE 属于事实标准组合（DHCP Option 82 定位 + Portal 认证 + RADIUS CoA 授权），非独立 RFC。
-PPPoE 会话态内核转发仍需 pppoe 驱动 + CAP_NET_RAW，Windows 仅为协议层编译。
+### 11.2 代拨设备对接（外部网关，非本项目实现）
+
+PPPoE/IPoE 拨号由**独立代拨聚合网关**承担，本项目只做 RADIUS/CoA 对接。契约详见
+`docs/dial-gateway-integration.md`（依据 `fanchaoping37/XuJing-Radius` 的 `DialProxy.java`）：
+
+| 对接面 | 方向 / 端口 | 本项目实现 | 状态 |
+|---|---|---|---|
+| 认证受理 | 网关 → 本项目 1812 | 代拨网关作为 NAS，标准 Access-Request 走 9 阶段管线；账号转换走 `proxy_dispatch` | 已接线，待设备联调 |
+| 计费受理 | 网关 → 本项目 1813 | Start/Interim/Stop、RFC 合规、去重、话单；`acct_mode` 控制转发 | 已接线，待设备联调 |
+| CoA/DM 下发 | 本项目 → 网关 3799 | `CoAService` + `radius_coa_task` 落库重投 | 已接线 |
+| 反向 DAS | 网关/上游 → 本项目 3799 | `dynauth_server.go` 校验后中继到 NAS | 已接线（默认关闭） |
+| 上游请求侧 VSA 注入 | 本项目 → 运营商 AAA | `Filter-Id=__DIALPROXY__`、`VSA 4881/156=CMCC` 等 | **未实现** |
+| 运营商拒绝原因短时缓存 | 本项目内部 | Java 侧 `PPPOE_AUTH_MESSAGE` 5 分钟缓存 | **未实现** |
+| PANABIT Stop 自动 Disconnect | 本项目 → 上游 3799 | 计费 Stop 触发专线 Disconnect 绑定 | **未实现** |
+
+**已删除**：`internal/pppoe`（Discovery/LCP/AF_PACKET）——属于独立代拨网关，不在本系统范围。
+IPoE 是事实标准组合（DHCP Option 82 + Portal + RADIUS CoA），非独立 RFC。
 
 ---
 
@@ -388,7 +413,8 @@ FreeRADIUS 是协议与 AAA 成熟度参照，不要求复制其 C 模块架构�
 | Dynamic Authorization | CoAService + DynAuth + task | 部分实现，租约/审计待补 |
 | Virtual Servers / unlang | 版本化策略 + registry | 项目采用类型安全注册，非复制 unlang |
 | HA / Load Balance / Observability | 代理池 + `pkg/metrics` 内存占位 | 部分实现，Prometheus/H A 待补 |
-| DHCP / DNS / PPPoE 等非 RADIUS 模块 | `accessnet` / `pppoe` | 部分实现，PPPoE 未接线 |
+| DHCP / DNS 等非 RADIUS 模块 | `accessnet` | 已接线（默认关闭） |
+| PPPoE 拨号 | 外部独立代拨网关 | **非本系统职责**：本系统仅以 RADIUS/CoA 对接，见第 11.2 节 |
 
 权威参考：[FreeRADIUS Features](https://wiki.freeradius.org/features/) ·
 [3.2 AAA 流程](https://www.freeradius.org/documentation/freeradius-server/3.2.11/concepts/aaa.html) ·
@@ -419,7 +445,8 @@ CoA 租约与审计导出、HA/灾备、License、安装升级回滚、数据迁
 | CoA / Disconnect | 部分实现 | RFC 5176、任务持久化、固定 ID 重投、DAS 入站 | 租约 fencing、UNKNOWN 状态、审计导出、白名单 |
 | Portal V2 | 部分实现 | 协议侧、auth_ticket、HTTP bridge、内置登录页 | V3/H3C、MAC-Trigger、设备互通、多实例状态 |
 | 接入网 DHCP/DNS/DHCPv6 | 已实现，待验证 | 协议与服务、Portal URL 下发、溯源 | 真实设备联调、地址池持久化 |
-| PPPoE / IPoE | 部分实现 | Discovery/PPP 线格式、Linux raw socket | 服务端进程未接线、内核转发、CAP_NET_RAW |
+| 代拨网关对接（RADIUS/CoA） | 已接线，待联调 | 网关作为 NAS 认证/计费受理、账号转换转发、CoA/DM 双向 | 请求侧 VSA 注入、拒绝原因缓存、PANABIT Stop 联动、设备联调；契约见 `docs/dial-gateway-integration.md` |
+| ~~PPPoE 拨号实现~~ | **已移出本系统** | 独立代拨聚合网关项目负责 | 本系统不实现 Discovery/LCP/AF_PACKET；`internal/pppoe` 已删除 |
 | 支付渠道 | 库已实现未接线 | 微信 v3 / 支付宝 RSA2 / 一卡通验签 | 生产入口接线、真实商户凭证、回调幂等 |
 | Redis / ClickHouse | 库已实现未接线 | Store 接口 + Redis、MergeTree 归档 | 生产接线、DSN 注入、故障降级（Redis 不自动降级） |
 | 管理面 / 开放 API | 已实现 | 19 组路由、JWT、HMAC、幂等、审计 | 全量前端页、配置发布审批、License |
@@ -451,3 +478,4 @@ CoA 租约与审计导出、HA/灾备、License、安装升级回滚、数据迁
 |---|---|---|
 | 2026-11-27 | `3e61b9d` | 建立唯一有效基线。汇总四批二开：`064eeec` 代理子系统核心、`db452b7` DynAuth、`21db012` 管理 API、`094b575` Portal V2、`f118a52` 校园 AAA 核心、`3e61b9d` 九大接入网/认证增强模块。 |
 | 2026-11-27 | `3e61b9d` | 明确"开发前对照、开发后更新、旧版删除"规则；标注孤儿包（payment/cache/analytics/pppoe）与已知失败。 |
+| 2026-11-27 | 本次修正 | **边界冻结**：PPPoE 代拨聚合网关为独立外部系统，本系统只以 RADIUS/CoA 对接代拨设备；删除误置的 `internal/pppoe` 包；新增 `docs/dial-gateway-integration.md` 对接契约（依据 XuJing-Radius `DialProxy.java`）；更新第 2.1/2.3/11/16/18 节。孤儿包标注移除 pppoe。 |

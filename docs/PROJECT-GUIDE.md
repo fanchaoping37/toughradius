@@ -20,9 +20,10 @@ ToughRADIUS 是一个用 Go 写的 RADIUS/AAA 服务器：设备（NAS/BRAS/AP�
 
 ```mermaid
 flowchart TB
-    subgraph 终端与网络设备
+    subgraph 终端与外部系统
         U[终端用户]
         NAS[NAS / BRAS / AP<br/>交换机 / 路由器]
+        DIAL[代拨聚合网关(外部独立项目)<br/>PPPoE 拨号 / 会话转发<br/>RADIUS 1812·1813 + CoA 3799 对接]
         PORTAL[外部或内置<br/>Portal 登录页]
     end
 
@@ -42,6 +43,9 @@ flowchart TB
 
     U -->|HTTP| PORTAL
     U -->|上网流量| NAS
+    U -->|PPPoE 拨号| DIAL
+    DIAL -->|RADIUS 1812/1813 (作为 NAS)| RAD
+    RAD -->|CoA/DM 3799| DIAL
     PORTAL -->|UDP 50100 Portal V2| PORTALSRV
     NAS -->|RADIUS 1812/1813| RAD
     NET -->|地址 / Portal URL / 引流| U
@@ -225,6 +229,40 @@ sequenceDiagram
 
 四者默认关闭，由 `internal/accessnet/bootstrap.go` 按配置启停，并注入 webserver 的 captive 中间件。
 
+### 4.7 与代拨网关对接（外部系统，非本项目实现）
+
+PPPoE 代拨聚合网关是**独立开发/部署的外部系统**，负责 PPPoE Discovery、LCP/PAP/CHAP、
+会话态与内核转发；本项目**不实现拨号**，只把它当作一台 NAS 对接：
+
+```mermaid
+sequenceDiagram
+    participant U as 拨号用户
+    participant G as 代拨网关(外部)
+    participant A as 本项目 AAA
+    participant O as 上游运营商 AAA(可选)
+
+    U->>G: PPPoE 拨号(PADI/PADO/PADR/PADS + PAP/CHAP)
+    G->>A: RADIUS Access-Request (1812, NAS=G)
+    A->>A: NAS 查找 → MA 校验 → 9 阶段管线
+    opt 校园账号转运营商账号
+        A->>O: proxy_dispatch 转发(凭据转换, 1812)
+        O-->>A: Access-Accept / Reject
+    end
+    A-->>G: Access-Accept/Reject (限速/VLAN/Class VSA)
+    G-->>U: PPPoE 会话建立 / 拒绝
+    G->>A: Accounting-Request Start/Interim/Stop (1813)
+    A->>A: RFC 合规话单 + 计费扣减 + 去重
+    A->>G: CoA-Request / Disconnect (3799, 到期/踢线/改速)
+    G-->>A: CoA-ACK / NAK
+```
+
+- **认证**：代拨网关作为 NAS，走标准 9 阶段管线；需要运营商账号时用 `proxy_dispatch`
+  把校园账号转换为运营商账号转发上游（`radius_realm_route` 配置）。
+- **计费**：Start/Interim/Stop 落话单，`acct_mode` 决定本地/转发/两者。
+- **控制**：管理端或策略到期通过 `CoAService` 向网关下发 CoA/DM（3799），任务先落库后发送。
+- 对接属性清单、厂商差异（锐捷/Drcom/Panabit/电信/移动/联通/XuJing）与未实现适配项见
+  `docs/dial-gateway-integration.md`。
+
 ---
 
 ## 5. 数据模型关系（主干）
@@ -313,6 +351,7 @@ go run ./cmd/benchmark ...      # 压力测试
 |---|---|
 | [`ARCHITECTURE-BASELINE.md`](./ARCHITECTURE-BASELINE.md) | **唯一有效**的架构与开发状态基线（状态矩阵、验收口径） |
 | 本文（`PROJECT-GUIDE.md`） | 面向读者的架构与业务流转说明（怎么跑起来、请求怎么流转） |
+| `dial-gateway-integration.md` | 代拨网关对接契约（外部 PPPoE 网关 ↔ 本项目 RADIUS/CoA；属性清单与厂商差异） |
 | `freeradius-comparison.md` | ToughRADIUS 与 FreeRADIUS 的功能模块对照证据 |
 | `campus-aaa-second-dev.md` | 第三批二开（话单合规/计费/CoA/Portal 票据/开放 API）实现说明 |
 | `campus-aaa-fourth-dev.md` | 第四批二开（九大模块）实现说明与权威协议依据 |
