@@ -4,7 +4,7 @@
 > 更新日期：2026-11-27
 > 仓库：`fanchaoping37/toughradius`（上游 `talkincode/toughradius`）
 > 开发分支：`dev-freeradius-compare`
-> 基准提交：本次架构边界修正提交（见文末变更记录）
+> 基准提交：`8a1966cf1b6271d8acedeb1a969b30ebda6b5822`（架构边界修正：代拨网关外部化）
 > 参考范式：用户提供的 Java 版《Radius-Vue-Plus 架构与开发基线》。本文合并此前四批二开的设计说明，
 > 历史审查证据见 `docs/freeradius-comparison.md`、`docs/campus-aaa-second-dev.md`、
 > `docs/campus-aaa-fourth-dev.md`、`docs/portal-v2-integration.md`、
@@ -478,4 +478,4 @@ CoA 租约与审计导出、HA/灾备、License、安装升级回滚、数据迁
 |---|---|---|
 | 2026-11-27 | `3e61b9d` | 建立唯一有效基线。汇总四批二开：`064eeec` 代理子系统核心、`db452b7` DynAuth、`21db012` 管理 API、`094b575` Portal V2、`f118a52` 校园 AAA 核心、`3e61b9d` 九大接入网/认证增强模块。 |
 | 2026-11-27 | `3e61b9d` | 明确"开发前对照、开发后更新、旧版删除"规则；标注孤儿包（payment/cache/analytics/pppoe）与已知失败。 |
-| 2026-11-27 | 本次修正 | **边界冻结**：PPPoE 代拨聚合网关为独立外部系统，本系统只以 RADIUS/CoA 对接代拨设备；删除误置的 `internal/pppoe` 包；新增 `docs/dial-gateway-integration.md` 对接契约（依据 XuJing-Radius `DialProxy.java`）；更新第 2.1/2.3/11/16/18 节。孤儿包标注移除 pppoe。 |
+| 2026-11-27 | `8a1966cf1b6271d8acedeb1a969b30ebda6b5822` | **边界冻结**：PPPoE 代拨聚合网关为独立外部系统，本系统只以 RADIUS/CoA 对接代拨设备；删除误置的 `internal/pppoe` 包；新增 `docs/dial-gateway-integration.md` 对接契约（依据 XuJing-Radius `DialProxy.java`）；更新第 2.1/2.3/11/16/18 节。孤儿包标注移除 pppoe。 |
